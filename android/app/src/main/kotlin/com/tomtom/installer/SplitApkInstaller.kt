@@ -46,7 +46,7 @@ class SplitApkInstaller(private val activity: Activity) {
     private fun installSplits(apks: List<File>, callback: InstallCallback) {
         val pi = activity.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).also {
-            it.setInstallerPackageName("com.android.vending")
+
             it.setSize(apks.sumOf { f -> f.length() })
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 it.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
