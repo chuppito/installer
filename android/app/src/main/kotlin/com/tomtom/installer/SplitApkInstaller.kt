@@ -23,9 +23,42 @@ class SplitApkInstaller(private val activity: Activity) {
             when {
                 apks.isEmpty() -> callback.onError("Aucun APK trouvé")
                 apks.size == 1 -> callback.onError("SINGLE:${apks[0].absolutePath}")
-                else -> installSplits(apks, callback)
+                else -> {
+                    // Essaie root en premier si disponible
+                    if (isRooted()) installSplitsRoot(apks, callback)
+                    else installSplits(apks, callback)
+                }
             }
         } catch (e: Exception) { callback.onError("Erreur: ${e.message}") }
+    }
+
+    private fun isRooted(): Boolean {
+        val paths = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su")
+        return paths.any { java.io.File(it).exists() } || try {
+            Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
+                .inputStream.bufferedReader().readLine() != null
+        } catch (_: Exception) { false }
+    }
+
+    private fun installSplitsRoot(apks: List<File>, callback: InstallCallback) {
+        try {
+            val paths = apks.joinToString(" ") { ""${it.absolutePath}"" }
+            val process = Runtime.getRuntime().exec("su")
+            val os = java.io.DataOutputStream(process.outputStream)
+            os.writeBytes("pm install-multiple -t -i "com.android.vending" -r $paths
+")
+            os.writeBytes("exit
+")
+            os.flush()
+            val code = process.waitFor()
+            val err = process.errorStream.bufferedReader().readText()
+            process.destroy()
+            if (code == 0) callback.onSuccess()
+            else callback.onError("Erreur root: $err")
+        } catch (e: Exception) {
+            // Fallback Session API si root échoue
+            installSplits(apks, callback)
+        }
     }
 
     private fun extractApks(archive: File): List<File> {
