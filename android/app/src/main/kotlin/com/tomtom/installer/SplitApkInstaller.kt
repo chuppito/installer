@@ -23,13 +23,13 @@ class SplitApkInstaller(private val activity: Activity) {
             val apks = extractApks(file)
             when {
                 apks.isEmpty() -> callback.onError("Aucun APK trouvé")
-                apks.size == 1 -> callback.onError("SINGLE:${apks[0].absolutePath}")
+                apks.size == 1 -> callback.onError("SINGLE:" + apks[0].absolutePath)
                 else -> {
                     if (isRooted()) installSplitsRoot(apks, callback)
                     else installSplits(apks, callback)
                 }
             }
-        } catch (e: Exception) { callback.onError("Erreur: ${e.message}") }
+        } catch (e: Exception) { callback.onError("Erreur: " + e.message) }
     }
 
     private fun isRooted(): Boolean {
@@ -53,7 +53,7 @@ class SplitApkInstaller(private val activity: Activity) {
             val err = process.errorStream.bufferedReader().readText()
             process.destroy()
             if (exitCode == 0) callback.onSuccess()
-            else callback.onError("Erreur root: $err")
+            else callback.onError("Erreur root: " + err)
         } catch (e: Exception) {
             installSplits(apks, callback)
         }

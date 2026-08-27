@@ -18,12 +18,16 @@ import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import rikka.shizuku.Shizuku
 
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.tomtom.installer/install"
     private val REQUEST_INSTALL = 1001
+    private val SHIZUKU_REQUEST_CODE = 1002
     private var pendingResult: MethodChannel.Result? = null
+    private var pendingShizukuResult: MethodChannel.Result? = null
+    private var pendingShizukuPath: String? = null
     private lateinit var splitInstaller: SplitApkInstaller
 
     private val logFile: File by lazy {
@@ -40,12 +44,57 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun logDevice() {
-        log("DEVICE", "Brand: ${Build.BRAND} | Model: ${Build.MODEL} | SDK: ${Build.VERSION.SDK_INT} | ColorOS: ${isColorOS()} | HyperOS: ${isHyperOS()} | Root: ${isRooted()}")
+        log("DEVICE", "Brand: ${Build.BRAND} | Model: ${Build.MODEL} | SDK: ${Build.VERSION.SDK_INT} | ColorOS: ${isColorOS()} | HyperOS: ${isHyperOS()} | Root: ${isRooted()} | Shizuku: ${isShizukuAvailable()}")
+    }
+
+    // ─── Shizuku ────────────────────────────────────────────────────────────
+
+    private val shizukuRequestPermissionResultListener =
+        Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    log("SHIZUKU", "Permission accordée")
+                    val path = pendingShizukuPath
+                    val result = pendingShizukuResult
+                    pendingShizukuPath = null
+                    pendingShizukuResult = null
+                    if (path != null && result != null) {
+                        doInstallShizuku(path, result)
+                    }
+                } else {
+                    log("SHIZUKU", "Permission refusée")
+                    pendingShizukuResult?.error("SHIZUKU_DENIED", "Permission Shizuku refusée", null)
+                    pendingShizukuPath = null
+                    pendingShizukuResult = null
+                }
+            }
+        }
+
+    private fun isShizukuAvailable(): Boolean {
+        return try {
+            Shizuku.pingBinder()
+        } catch (_: Exception) { false }
+    }
+
+    private fun isShizukuGranted(): Boolean {
+        return try {
+            if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) {
+                false
+            } else {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }
+        } catch (_: Exception) { false }
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         splitInstaller = SplitApkInstaller(this)
+        Shizuku.addRequestPermissionResultListener(shizukuRequestPermissionResultListener)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Shizuku.removeRequestPermissionResultListener(shizukuRequestPermissionResultListener)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -53,7 +102,7 @@ class MainActivity : FlutterActivity() {
         if (requestCode == REQUEST_INSTALL) {
             val result = pendingResult; pendingResult = null
             when (resultCode) {
-                Activity.RESULT_OK -> { log("RESULT", "Succès"); result?.success("install_success") }
+                Activity.RESULT_OK -> { log("RESULT", "Succès ✓"); result?.success("install_success") }
                 Activity.RESULT_CANCELED -> { log("RESULT", "Annulée"); result?.success("install_cancelled") }
                 Activity.RESULT_FIRST_USER -> { log("RESULT", "Échec"); result?.success("install_failed") }
                 else -> { log("RESULT", "Code: $resultCode"); result?.success("install_unknown") }
@@ -68,6 +117,25 @@ class MainActivity : FlutterActivity() {
                 "installApk" -> doInstall(call.argument("path"), result, "STANDARD") { installApk(it) }
                 "installApkOppo" -> doInstall(call.argument("path"), result, "OPPO") { installOppo(it) }
                 "installApkHyperOS" -> doInstall(call.argument("path"), result, "HYPEROS") { installHyperOS(it) }
+                "installApkShizuku" -> {
+                    val path = call.argument<String>("path")
+                    if (path != null) {
+                        log("SHIZUKU", "Début: $path"); logDevice()
+                        if (!isShizukuAvailable()) {
+                            log("SHIZUKU", "Shizuku non disponible")
+                            result.error("SHIZUKU_UNAVAILABLE", "Shizuku n'est pas disponible. Installe l'app Shizuku.", null)
+                            return@setMethodCallHandler
+                        }
+                        if (!isShizukuGranted()) {
+                            log("SHIZUKU", "Demande de permission")
+                            pendingShizukuPath = path
+                            pendingShizukuResult = result
+                            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+                        } else {
+                            doInstallShizuku(path, result)
+                        }
+                    } else result.error("INVALID_PATH", "null", null)
+                }
                 "installApkRoot" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
@@ -80,7 +148,7 @@ class MainActivity : FlutterActivity() {
                     if (path != null) {
                         log("SPLIT", "Début: $path"); logDevice()
                         splitInstaller.install(path, object : SplitApkInstaller.InstallCallback {
-                            override fun onSuccess() { log("SPLIT", "Session OK"); result.success("install_started") }
+                            override fun onSuccess() { log("SPLIT", "OK"); result.success("install_started") }
                             override fun onError(msg: String) {
                                 if (msg.startsWith("SINGLE:")) { pendingResult = result; installApk(msg.removePrefix("SINGLE:")) }
                                 else { log("SPLIT", "ERREUR: $msg"); result.error("SPLIT_ERROR", msg, null) }
@@ -91,6 +159,8 @@ class MainActivity : FlutterActivity() {
                 "isRooted" -> result.success(isRooted())
                 "isColorOS" -> result.success(isColorOS())
                 "isHyperOS" -> result.success(isHyperOS())
+                "isShizukuAvailable" -> result.success(isShizukuAvailable())
+                "isShizukuGranted" -> result.success(isShizukuGranted())
                 "getLogPath" -> result.success(logFile.absolutePath)
                 "clearLog" -> { try { logFile.writeText(""); result.success("ok") } catch (e: Exception) { result.error("ERR", e.message, null) } }
                 else -> result.notImplemented()
@@ -125,7 +195,6 @@ class MainActivity : FlutterActivity() {
             ComponentName(packageName, "$packageName.OppoTrick"),
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP
         )
-        log("OPPO", "OppoTrick activé")
         startActivityForResult(Intent(Intent.ACTION_VIEW).apply {
             setClassName(packageName, "$packageName.OppoTrick")
             setDataAndType(uri(f), "application/vnd.android.package-archive")
@@ -136,7 +205,6 @@ class MainActivity : FlutterActivity() {
 
     private fun installHyperOS(path: String) {
         val f = File(path); if (!f.exists()) throw IOException("Introuvable: $path")
-        log("HYPEROS", "${f.length()} octets")
         try {
             packageManager.setComponentEnabledSetting(
                 ComponentName("com.miui.securitycenter", "com.miui.permcenter.install.InstallPackageActivity"),
@@ -154,11 +222,39 @@ class MainActivity : FlutterActivity() {
         }, REQUEST_INSTALL)
     }
 
+    private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
+        try {
+            val f = File(path); if (!f.exists()) throw IOException("Introuvable: $path")
+            log("SHIZUKU", "Installation via Shizuku: ${f.length()} octets")
+
+            // Utilise Shizuku pour exécuter pm install avec com.android.vending
+            val cmd = "pm install -t -i com.android.vending -r \"$path\""
+            log("SHIZUKU", "Commande: $cmd")
+
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val exitCode = process.waitFor()
+            val output = process.inputStream.bufferedReader().readText()
+            val error = process.errorStream.bufferedReader().readText()
+            process.destroy()
+
+            log("SHIZUKU", "Exit: $exitCode | out: $output | err: $error")
+
+            if (exitCode == 0 || output.contains("Success") || error.contains("Success")) {
+                result.success("install_success")
+            } else {
+                result.success("install_failed")
+            }
+        } catch (e: Exception) {
+            log("SHIZUKU", "ERREUR: ${e.message}")
+            result.error("SHIZUKU_ERROR", e.message, null)
+        }
+    }
+
     private fun installRoot(path: String) {
         val f = File(path); if (!f.exists()) throw IOException("Introuvable: $path")
         val p = Runtime.getRuntime().exec("su")
         DataOutputStream(p.outputStream).use { os ->
-            os.writeBytes("pm install -t -i \"com.android.vending\" -r \"$path\"\n")
+            os.writeBytes("pm install -t -i com.android.vending -r \"$path\"\n")
             os.writeBytes("exit\n"); os.flush()
         }
         val code = p.waitFor()

@@ -4,7 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
 enum InstallStatus { idle, requestingPermission, pickingFile, installing, success, error }
-enum InstallMethod { standard, oppoNoRoot, hyperOS, oppoRoot }
+enum InstallMethod { standard, oppoNoRoot, hyperOS, shizuku, oppoRoot }
 
 class ApkInstallerService {
   static const _ch = MethodChannel('com.tomtom.installer/install');
@@ -26,6 +26,8 @@ class ApkInstallerService {
       await _ch.invokeMethod<String>('installApkOppo', {'path': p}) ?? 'started';
   static Future<String> installApkHyperOS(String p) async =>
       await _ch.invokeMethod<String>('installApkHyperOS', {'path': p}) ?? 'started';
+  static Future<String> installApkShizuku(String p) async =>
+      await _ch.invokeMethod<String>('installApkShizuku', {'path': p}) ?? 'started';
   static Future<String> installApkRoot(String p) async =>
       await _ch.invokeMethod<String>('installApkRoot', {'path': p}) ?? 'started';
   static Future<String> installSplitApk(String p) async =>
@@ -34,6 +36,8 @@ class ApkInstallerService {
   static Future<bool> isRooted() async { try { return await _ch.invokeMethod<bool>('isRooted') ?? false; } catch (_) { return false; } }
   static Future<bool> isColorOS() async { try { return await _ch.invokeMethod<bool>('isColorOS') ?? false; } catch (_) { return false; } }
   static Future<bool> isHyperOS() async { try { return await _ch.invokeMethod<bool>('isHyperOS') ?? false; } catch (_) { return false; } }
+  static Future<bool> isShizukuAvailable() async { try { return await _ch.invokeMethod<bool>('isShizukuAvailable') ?? false; } catch (_) { return false; } }
+  static Future<bool> isShizukuGranted() async { try { return await _ch.invokeMethod<bool>('isShizukuGranted') ?? false; } catch (_) { return false; } }
   static Future<String?> getLogPath() async { try { return await _ch.invokeMethod<String>('getLogPath'); } catch (_) { return null; } }
   static Future<void> clearLog() async { try { await _ch.invokeMethod('clearLog'); } catch (_) {} }
   static Future<bool> canInstall() async => await Permission.requestInstallPackages.isGranted;
