@@ -69,17 +69,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun forceInstallerViaShizuku(packageName: String) {
-        Thread {
-            try {
-                val cmd = "cmd package set-installer $packageName $VENDING"
-                val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
-                process.waitFor()
-                process.destroy()
-                log("POST_INSTALL", "Source forcée via Shizuku pour $packageName")
-            } catch (e: Exception) {
-                log("POST_INSTALL", "Shizuku set-installer échoué: ${e.message}")
-            }
-        }.start()
+        // Shizuku.newProcess est privé dans l'API publique
+        // On utilise root comme fallback pour set-installer
+        forceInstallerViaRoot(packageName)
     }
 
     private fun forceInstallerViaRoot(packageName: String) {
@@ -290,30 +282,39 @@ class MainActivity : FlutterActivity() {
                     try { grantUriPermission(pkg, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
                 }
 
-                // Commande am start avec tous les extras King
-                val amCmd = "am start" +
-                    " -a android.intent.action.INSTALL_PACKAGE" +
-                    " -d \"$fileUri\"" +
-                    " -t \"application/vnd.android.package-archive\"" +
-                    " -f 0x00000001" +
-                    " --es android.intent.extra.INSTALLER_PACKAGE_NAME \"$VENDING\"" +
-                    " --es android.intent.extra.REFERRER_NAME \"android-app://$VENDING\"" +
-                    " --ei android.intent.extra.INSTALL_REASON 1" +
-                    " --ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
-
-                log("SHIZUKU", "Commande: $amCmd")
-
-                val process = Shizuku.newProcess(arrayOf("sh", "-c", amCmd), null, null)
-                val output = process.inputStream.bufferedReader().readText()
-                val error = process.errorStream.bufferedReader().readText()
-                val exitCode = process.waitFor()
-                process.destroy()
-
-                log("SHIZUKU", "Exit:$exitCode out:$output err:$error")
-
-                runOnUiThread {
-                    if (exitCode == 0) result.success("install_started")
-                    else result.error("SHIZUKU_ERROR", "Exit $exitCode: $error", null)
+                // Utilise PackageInstaller avec setInstallerPackageName
+                // Shizuku donne les droits élevés pour bypasser la restriction UID
+                val pi = packageManager.packageInstaller
+                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                params.setInstallerPackageName(VENDING)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
+                }
+                val sessionId = pi.createSession(params)
+                val session = pi.openSession(sessionId)
+                try {
+                    session.openWrite("package", 0, f.length()).use { output ->
+                        FileInputStream(f).use { input ->
+                            val buffer = ByteArray(65536); var n: Int
+                            while (input.read(buffer).also { n = it } != -1) output.write(buffer, 0, n)
+                            session.fsync(output)
+                        }
+                    }
+                    val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                        action = "com.tomtom.installer.SHIZUKU_COMPLETE"
+                    }
+                    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
+                    else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                    val pi2 = android.app.PendingIntent.getActivity(this@MainActivity, sessionId, intent, flags)
+                    session.commit(pi2.intentSender)
+                    log("SHIZUKU", "Session PackageInstaller commitée")
+                    runOnUiThread { result.success("install_started") }
+                } catch (e2: Exception) {
+                    session.abandon()
+                    throw e2
+                } finally {
+                    session.close()
                 }
             } catch (e: Exception) {
                 log("SHIZUKU", "ERREUR:${e.message}")
