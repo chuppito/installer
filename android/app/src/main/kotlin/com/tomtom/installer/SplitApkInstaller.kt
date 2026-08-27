@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
+import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.ZipFile
@@ -24,7 +25,6 @@ class SplitApkInstaller(private val activity: Activity) {
                 apks.isEmpty() -> callback.onError("Aucun APK trouvé")
                 apks.size == 1 -> callback.onError("SINGLE:${apks[0].absolutePath}")
                 else -> {
-                    // Essaie root en premier si disponible
                     if (isRooted()) installSplitsRoot(apks, callback)
                     else installSplits(apks, callback)
                 }
@@ -34,7 +34,7 @@ class SplitApkInstaller(private val activity: Activity) {
 
     private fun isRooted(): Boolean {
         val paths = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su")
-        return paths.any { java.io.File(it).exists() } || try {
+        return paths.any { File(it).exists() } || try {
             Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
                 .inputStream.bufferedReader().readLine() != null
         } catch (_: Exception) { false }
@@ -43,18 +43,16 @@ class SplitApkInstaller(private val activity: Activity) {
     private fun installSplitsRoot(apks: List<File>, callback: InstallCallback) {
         try {
             val pathList = apks.joinToString(" ") { it.absolutePath }
-            val cmd = "pm install-multiple -t -i com.android.vending -r $pathList"
+            val cmd = "pm install-multiple -t -i com.android.vending -r " + pathList
             val process = Runtime.getRuntime().exec("su")
-            val os = java.io.DataOutputStream(process.outputStream)
-            os.writeBytes(cmd + "
-")
-            os.writeBytes("exit
-")
+            val os = DataOutputStream(process.outputStream)
+            os.writeBytes(cmd + "\n")
+            os.writeBytes("exit\n")
             os.flush()
-            val code = process.waitFor()
+            val exitCode = process.waitFor()
             val err = process.errorStream.bufferedReader().readText()
             process.destroy()
-            if (code == 0) callback.onSuccess()
+            if (exitCode == 0) callback.onSuccess()
             else callback.onError("Erreur root: $err")
         } catch (e: Exception) {
             installSplits(apks, callback)
@@ -62,7 +60,7 @@ class SplitApkInstaller(private val activity: Activity) {
     }
 
     private fun extractApks(archive: File): List<File> {
-        val dir = File(activity.cacheDir, "splits_${System.currentTimeMillis()}").also { it.mkdirs() }
+        val dir = File(activity.cacheDir, "splits_" + System.currentTimeMillis()).also { it.mkdirs() }
         val result = mutableListOf<File>()
         ZipFile(archive).use { zip ->
             zip.entries().asSequence()
@@ -79,7 +77,6 @@ class SplitApkInstaller(private val activity: Activity) {
     private fun installSplits(apks: List<File>, callback: InstallCallback) {
         val pi = activity.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).also {
-
             it.setSize(apks.sumOf { f -> f.length() })
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 it.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
