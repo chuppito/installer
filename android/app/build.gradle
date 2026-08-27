@@ -36,7 +36,7 @@ android {
 
     defaultConfig {
         applicationId "com.tomtom.installer"
-        minSdkVersion 23
+        minSdkVersion 24
         targetSdkVersion 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
