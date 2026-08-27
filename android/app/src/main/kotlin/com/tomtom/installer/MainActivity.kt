@@ -228,10 +228,10 @@ class MainActivity : FlutterActivity() {
             log("SHIZUKU", "Installation via Shizuku: ${f.length()} octets")
 
             // Utilise Shizuku pour exécuter pm install avec com.android.vending
-            val cmd = "pm install -t -i com.android.vending -r \"$path\""
-            log("SHIZUKU", "Commande: $cmd")
+            val cmd = arrayOf("pm", "install", "-t", "-i", "com.android.vending", "-r", path)
+            log("SHIZUKU", "Commande: " + cmd.joinToString(" "))
 
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val process = Shizuku.newProcess(cmd, null, "/")
             val exitCode = process.waitFor()
             val output = process.inputStream.bufferedReader().readText()
             val error = process.errorStream.bufferedReader().readText()
