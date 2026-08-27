@@ -91,7 +91,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     } catch (e) {
       final msg = e.toString();
       if (msg.contains('SHIZUKU_UNAVAILABLE')) {
-        _set(InstallStatus.error, 'Shizuku non disponible. Installe l\'app Shizuku depuis le Play Store et lance-le.');
+        _set(InstallStatus.error, 'Shizuku non disponible. Installe l\'app Shizuku et lance-le.');
       } else if (msg.contains('SHIZUKU_DENIED')) {
         _set(InstallStatus.error, 'Permission Shizuku refusée.');
       } else {
@@ -107,22 +107,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _permDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
     title: const Text('Permissions requises'),
     content: const Text('Accès aux fichiers et installation d\'applications requis.'),
-    actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')), FilledButton(onPressed: () { Navigator.pop(ctx); openAppSettings(); }, child: const Text('Paramètres'))],
+    actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+      FilledButton(onPressed: () { Navigator.pop(ctx); openAppSettings(); }, child: const Text('Paramètres'))],
   ));
 
   void _shizukuDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
-    title: const Text('Shizuku — Mode universel'),
+    title: const Text('Shizuku — Installation universelle'),
     content: const SingleChildScrollView(child: Text(
-      'Shizuku permet d\'installer des APK avec com.android.vending sans root.\n\n'
-      'Testé et confirmé sur :\n'
-      '• Honor • Nothing Phone\n'
-      '• Pixel • Redmagic\n'
-      '• Et la plupart des appareils\n\n'
+      'Shizuku installe via shell système avec tous les droits Play Store.\n\n'
+      '✅ Testé sur : Honor, Nothing, Pixel, Redmagic\n'
+      '✅ Fonctionne sur Android 11+\n'
+      '✅ Pas besoin de root\n\n'
       'Comment l\'activer :\n'
       '1. Installe "Shizuku" depuis le Play Store\n'
-      '2. Active le débogage sans fil dans les options développeur\n'
-      '3. Lance Shizuku via "Démarrer via ADB"\n'
-      '4. Reviens ici et appuie sur Shizuku',
+      '2. Active "Débogage sans fil" dans les options développeur\n'
+      '3. Dans Shizuku, appuie sur "Démarrer via ADB"\n'
+      '4. Reviens ici et appuie sur Shizuku\n\n'
+      'ℹ️ Après chaque redémarrage, il faut relancer Shizuku une fois.',
     )),
     actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
   ));
@@ -166,7 +167,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Banner
           Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(color: const Color(0xFF1A73E8).withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF1A73E8).withOpacity(0.3))),
             child: const Row(children: [
@@ -176,7 +176,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               Icon(Icons.verified_rounded, color: Color(0xFF1A73E8), size: 16),
             ])),
 
-          // Badges
           if (_colorOS || _hyperOS || _rooted || _shizuku || _split) ...[
             const SizedBox(height: 10),
             Wrap(spacing: 8, runSpacing: 6, children: [
@@ -190,7 +189,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
           const SizedBox(height: 20),
 
-          // Zone sélection
           AnimatedContainer(duration: const Duration(milliseconds: 250),
             decoration: BoxDecoration(
               color: _path != null ? cs.primaryContainer.withOpacity(0.3) : (dark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100),
@@ -217,26 +215,31 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           const SizedBox(height: 20),
           if (_msg.isNotEmpty) ...[StatusBanner(status: _status, message: _msg), const SizedBox(height: 16)],
 
-          // Boutons
           if (_path == null)
             _mainBtn('Choisir un fichier', Icons.folder_open_rounded, cs.primary, _pick, false)
           else Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _mainBtn(_split ? 'Installer (split)' : 'Package Installer', Icons.system_update_alt_rounded, const Color(0xFF1A73E8), busy ? null : () => _install(InstallMethod.standard), busy),
+            _mainBtn(_split ? 'Installer (split)' : 'Installer', Icons.system_update_alt_rounded,
+              const Color(0xFF1A73E8), busy ? null : () => _install(InstallMethod.standard), busy),
             if (!_split) ...[
               const SizedBox(height: 12),
               _div(cs),
               const SizedBox(height: 12),
-              _altBtn('Shizuku + correction Play Store', 'Package Installer puis set-installer → Play Store', Icons.vpn_key_rounded, Colors.teal,
-                busy ? null : () => _install(InstallMethod.shizuku),
-                info: _shizukuDialog),
+              _altBtn('Shizuku (universel)', 'Honor, Nothing, Pixel, Redmagic…', Icons.vpn_key_rounded, Colors.teal,
+                busy ? null : () => _install(InstallMethod.shizuku), info: _shizukuDialog),
               const SizedBox(height: 10),
-              _altBtn('Oppo / Realme (ColorOS)', 'OppoTrick — bypass scanner', Icons.phonelink_setup_rounded, Colors.orange, busy ? null : () => _install(InstallMethod.oppoNoRoot)),
+              _altBtn('Oppo / Realme (ColorOS)', 'OppoTrick — bypass scanner', Icons.phonelink_setup_rounded, Colors.orange,
+                busy ? null : () => _install(InstallMethod.oppoNoRoot)),
               const SizedBox(height: 10),
-              _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange, busy ? null : () => _install(InstallMethod.hyperOS)),
+              _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange,
+                busy ? null : () => _install(InstallMethod.hyperOS)),
               const SizedBox(height: 10),
-              _altBtn('Root', 'pm install -i puis set-installer → Play Store', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
+              _altBtn('Root', 'pm install -i com.android.vending', Icons.security_rounded,
+                _rooted ? Colors.green : Colors.grey,
                 busy ? null : () {
-                  if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'), actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))]));
+                  if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(
+                    title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'),
+                    actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+                  ));
                   else _install(InstallMethod.oppoRoot);
                 }, disabled: !_rooted),
             ],
@@ -271,7 +274,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget _altBtn(String l, String sub, IconData ic, Color c, VoidCallback? fn, {bool disabled = false, VoidCallback? info}) => Opacity(
     opacity: disabled ? 0.5 : 1,
     child: OutlinedButton(onPressed: fn,
-      style: OutlinedButton.styleFrom(foregroundColor: c, side: BorderSide(color: c.withOpacity(0.5), width: 1.5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10)),
+      style: OutlinedButton.styleFrom(foregroundColor: c, side: BorderSide(color: c.withOpacity(0.5), width: 1.5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10)),
       child: Row(children: [
         Icon(ic, size: 20, color: c), const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -283,14 +287,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ])));
 
   Widget _compat(ColorScheme cs) {
-    const items = [('Pixel', Icons.smartphone_rounded), ('Samsung', Icons.phone_android_rounded), ('OnePlus', Icons.devices_rounded), ('Oppo', Icons.phone_iphone_rounded), ('Realme', Icons.phone_rounded), ('Xiaomi', Icons.phone_android_rounded), ('LineageOS', Icons.settings_applications_rounded), ('Honor', Icons.phone_rounded), ('Nothing', Icons.phone_android_rounded), ('Redmagic', Icons.videogame_asset_rounded)];
+    const items = [('Pixel', Icons.smartphone_rounded), ('Samsung', Icons.phone_android_rounded),
+      ('OnePlus', Icons.devices_rounded), ('Oppo', Icons.phone_iphone_rounded), ('Realme', Icons.phone_rounded),
+      ('Xiaomi', Icons.phone_android_rounded), ('LineageOS', Icons.settings_applications_rounded),
+      ('Honor', Icons.phone_rounded), ('Nothing', Icons.phone_android_rounded), ('Redmagic', Icons.videogame_asset_rounded)];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Compatible avec', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withOpacity(0.5))),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 8, children: items.map((b) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(20)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(b.$2, size: 13, color: cs.primary), const SizedBox(width: 4), Text(b.$1, style: TextStyle(fontSize: 12, color: cs.onSurface.withOpacity(0.8)))]),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(b.$2, size: 13, color: cs.primary), const SizedBox(width: 4),
+          Text(b.$1, style: TextStyle(fontSize: 12, color: cs.onSurface.withOpacity(0.8)))]),
       )).toList()),
     ]);
   }

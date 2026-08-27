@@ -1,18 +1,23 @@
 package com.tomtom.installer
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import java.io.BufferedReader
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileWriter
 import java.io.IOException
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,6 +32,8 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.tomtom.installer/install"
     private val REQUEST_INSTALL = 1001
     private val SHIZUKU_CODE = 1002
+    private val VENDING = "com.android.vending"
+
     private var pendingResult: MethodChannel.Result? = null
     private var pendingShizukuResult: MethodChannel.Result? = null
     private var pendingShizukuPath: String? = null
@@ -42,18 +49,63 @@ class MainActivity : FlutterActivity() {
         android.util.Log.d("Installer_$tag", msg)
     }
 
-    private fun logDevice() {
-        log("DEVICE", "Brand:${Build.BRAND} Model:${Build.MODEL} SDK:${Build.VERSION.SDK_INT} ColorOS:${isColorOS()} HyperOS:${isHyperOS()} Root:${isRooted()} Shizuku:${isShizukuAvailable()}")
+    // ─── BroadcastReceiver : après installation, force com.android.vending ──
+    // Inspiré de KingInstaller 1.7 : cmd package set-installer <pkg> com.android.vending
+    private val packageAddedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_PACKAGE_ADDED || intent.action == Intent.ACTION_PACKAGE_REPLACED) {
+                val packageName = intent.data?.schemeSpecificPart ?: return
+                log("POST_INSTALL", "Package installé: $packageName — forçage source Play Store")
+                // Via Shizuku si disponible
+                if (isShizukuAvailable() && isShizukuGranted()) {
+                    forceInstallerViaShizuku(packageName)
+                }
+                // Via root si disponible
+                else if (isRooted()) {
+                    forceInstallerViaRoot(packageName)
+                }
+            }
+        }
     }
 
-    // ─── Shizuku listener ───────────────────────────────────────────────────
+    private fun forceInstallerViaShizuku(packageName: String) {
+        Thread {
+            try {
+                val cmd = "cmd package set-installer $packageName $VENDING"
+                val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+                process.waitFor()
+                process.destroy()
+                log("POST_INSTALL", "Source forcée via Shizuku pour $packageName")
+            } catch (e: Exception) {
+                log("POST_INSTALL", "Shizuku set-installer échoué: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun forceInstallerViaRoot(packageName: String) {
+        Thread {
+            try {
+                val process = Runtime.getRuntime().exec("su")
+                val os = DataOutputStream(process.outputStream)
+                os.writeBytes("cmd package set-installer $packageName $VENDING\n")
+                os.writeBytes("exit\n")
+                os.flush()
+                process.waitFor()
+                process.destroy()
+                log("POST_INSTALL", "Source forcée via root pour $packageName")
+            } catch (e: Exception) {
+                log("POST_INSTALL", "Root set-installer échoué: ${e.message}")
+            }
+        }.start()
+    }
+
+    // ─── Shizuku ────────────────────────────────────────────────────────────
 
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { code, result ->
         if (code == SHIZUKU_CODE) {
             if (result == PackageManager.PERMISSION_GRANTED) {
                 log("SHIZUKU", "Permission accordée")
-                val path = pendingShizukuPath
-                val res = pendingShizukuResult
+                val path = pendingShizukuPath; val res = pendingShizukuResult
                 pendingShizukuPath = null; pendingShizukuResult = null
                 if (path != null && res != null) doInstallShizuku(path, res)
             } else {
@@ -65,7 +117,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isShizukuAvailable(): Boolean = try { Shizuku.pingBinder() } catch (_: Exception) { false }
-
     private fun isShizukuGranted(): Boolean = try {
         !Shizuku.isPreV11() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
     } catch (_: Exception) { false }
@@ -74,11 +125,20 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         splitInstaller = SplitApkInstaller(this)
         try { Shizuku.addRequestPermissionResultListener(shizukuListener) } catch (_: Exception) {}
+
+        // Écoute les installations pour forcer la source Play Store après coup
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        registerReceiver(packageAddedReceiver, filter)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try { Shizuku.removeRequestPermissionResultListener(shizukuListener) } catch (_: Exception) {}
+        try { unregisterReceiver(packageAddedReceiver) } catch (_: Exception) {}
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -104,10 +164,9 @@ class MainActivity : FlutterActivity() {
                 "installApkShizuku" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        log("SHIZUKU", "Début: $path"); logDevice()
+                        log("SHIZUKU", "Début: $path")
                         if (!isShizukuAvailable()) {
-                            result.error("SHIZUKU_UNAVAILABLE", "Shizuku non disponible", null)
-                            return@setMethodCallHandler
+                            result.error("SHIZUKU_UNAVAILABLE", "Shizuku non disponible", null); return@setMethodCallHandler
                         }
                         if (!isShizukuGranted()) {
                             pendingShizukuPath = path; pendingShizukuResult = result
@@ -119,14 +178,14 @@ class MainActivity : FlutterActivity() {
                 "installApkRoot" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        try { log("ROOT", "Début"); logDevice(); installRoot(path); result.success("install_success") }
+                        try { log("ROOT", "Début"); installRoot(path); result.success("install_success") }
                         catch (e: Exception) { log("ROOT", "ERREUR:${e.message}"); result.error("ROOT_ERROR", e.message, null) }
                     } else result.error("INVALID_PATH", "null", null)
                 }
                 "installSplitApk" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        log("SPLIT", "Début: $path"); logDevice()
+                        log("SPLIT", "Début: $path")
                         splitInstaller.install(path, object : SplitApkInstaller.InstallCallback {
                             override fun onSuccess() { log("SPLIT", "OK"); result.success("install_started") }
                             override fun onError(msg: String) {
@@ -150,22 +209,38 @@ class MainActivity : FlutterActivity() {
 
     private fun doInstall(path: String?, result: MethodChannel.Result, tag: String, action: (String) -> Unit) {
         if (path != null) {
-            try { log(tag, "Début:$path"); logDevice(); pendingResult = result; action(path) }
+            try { log(tag, "Début:$path"); pendingResult = result; action(path) }
             catch (e: Exception) { log(tag, "ERREUR:${e.message}"); pendingResult = null; result.error("INSTALL_ERROR", e.message, null) }
         } else result.error("INVALID_PATH", "null", null)
     }
 
     private fun uri(f: File): Uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", f)
 
+    // ─── Méthode King (standard + tous les extras) ───────────────────────────
+    private fun buildKingIntent(apkUri: Uri): Intent {
+        return Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            data = apkUri
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+            putExtra(Intent.EXTRA_RETURN_RESULT, true)
+            putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, VENDING)
+            putExtra("installerPackageName", VENDING)
+            putExtra("android.content.pm.extra.VERIFICATION_INSTALLER_PACKAGE", VENDING)
+            putExtra("android.content.pm.extra.VERIFICATION_INSTALLER_UID", 0)
+            putExtra("android.intent.extra.INSTALL_REASON", 1)
+            putExtra("android.intent.extra.REFERRER_NAME", "android-app://$VENDING")
+            putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://$VENDING"))
+            putExtra("android.intent.extra.ORIGINATING_PACKAGE", VENDING)
+            if (Build.VERSION.SDK_INT >= 34) {
+                putExtra("android.content.pm.extra.REQUEST_UPDATE_OWNERSHIP", true)
+            }
+        }
+    }
+
     private fun installApk(path: String) {
         val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
         log("STANDARD", "${f.length()} octets")
-        startActivityForResult(Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-            data = uri(f); flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
-            putExtra(Intent.EXTRA_RETURN_RESULT, true)
-            putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, "com.android.vending")
-        }, REQUEST_INSTALL)
+        startActivityForResult(buildKingIntent(uri(f)), REQUEST_INSTALL)
     }
 
     private fun installOppo(path: String) {
@@ -192,121 +267,66 @@ class MainActivity : FlutterActivity() {
             )
             log("HYPEROS", "SecurityCenter désactivé")
         } catch (e: Exception) { log("HYPEROS", "SecurityCenter non désactivable:${e.message}") }
-        startActivityForResult(Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-            data = uri(f); flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
-            putExtra(Intent.EXTRA_RETURN_RESULT, true)
-            putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, "com.android.vending")
-            putExtra("miui_extra_install_enable_notification", false)
-            putExtra("miui.intent.extra.INSTALLER_PACKAGE_NAME", "com.android.vending")
+        startActivityForResult(buildKingIntent(uri(f)).also {
+            it.putExtra("miui_extra_install_enable_notification", false)
+            it.putExtra("miui.intent.extra.INSTALLER_PACKAGE_NAME", VENDING)
         }, REQUEST_INSTALL)
     }
 
+    // ─── Méthode Shizuku — am start via shell (méthode KingInstaller 1.7) ───
+    // Utilise `am start` en shell Shizuku pour lancer l'installeur avec
+    // tous les extras Play Store, bypass total du UID check
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
-        try {
-            val f = File(path)
-            if (!f.exists()) throw IOException("Introuvable:$path")
-
-            val archiveInfo = packageManager.getPackageArchiveInfo(path, PackageManager.GET_META_DATA)
-            val packageName = archiveInfo?.packageName
-                ?: throw IOException("Impossible de lire le nom du package de l'APK")
-
-            log("SHIZUKU", "Lancement du Package Installer via Shizuku: $packageName (${f.length()} octets)")
-
-            // Donner explicitement l'accès au content:// URI aux Package Installers système.
-            val fileUri = uri(f)
-            val targets = listOf(
-                "com.android.shell",
-                "com.google.android.packageinstaller",
-                "com.android.packageinstaller"
-            )
-            targets.forEach { pkg ->
-                try { grantUriPermission(pkg, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                catch (_: Exception) {}
-            }
-
-            pendingShizukuResult = result
-
-            // IMPORTANT : on ne fait pas pm install directement.
-            // On ouvre le Package Installer système afin que l'installation soit
-            // réellement initiée par celui-ci, puis on force ensuite l'installer
-            // de record à com.android.vending avec cmd package set-installer.
-            val uriString = fileUri.toString().replace("'", "\\'")
-            val command = "am start -a android.intent.action.INSTALL_PACKAGE " +
-                "-d '$uriString' " +
-                "-t 'application/vnd.android.package-archive' " +
-                "-f 0x00000001 " +
-                "--es android.intent.extra.INSTALLER_PACKAGE_NAME 'com.android.vending' " +
-                "--es android.intent.extra.REFERRER_NAME 'android-app://com.android.vending' " +
-                "--ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
-
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
-            val exit = process.waitFor()
-            process.destroy()
-            log("SHIZUKU", "am start exit=$exit stdout=$stdout stderr=$stderr")
-
-            if (exit != 0) {
-                pendingShizukuResult = null
-                throw IOException(stderr.ifEmpty { stdout.ifEmpty { "am start a échoué ($exit)" } })
-            }
-
-            // L'interface d'installation est maintenant gérée par le Package Installer.
-            // On surveille ensuite l'application pour appliquer la correction installer-of-record
-            // dès que l'installation est effectivement terminée.
-            result.success("install_started")
-            pendingShizukuResult = null
-            watchAndFixInstaller(packageName)
-        } catch (e: Exception) {
-            pendingShizukuResult = null
-            log("SHIZUKU", "ERREUR:${e.message}")
-            result.error("SHIZUKU_ERROR", e.message, null)
-        }
-    }
-
-    private fun watchAndFixInstaller(packageName: String) {
         Thread {
             try {
-                // Le Package Installer affiche une confirmation utilisateur.
-                // On attend jusqu'à 90 secondes que le package soit effectivement présent
-                // avant d'appliquer la correction privilégiée.
-                repeat(90) {
-                    Thread.sleep(1000)
-                    try {
-                        packageManager.getPackageInfo(packageName, 0)
-                        setInstallerViaShizuku(packageName)
-                        return@Thread
-                    } catch (_: PackageManager.NameNotFoundException) {
-                        // Pas encore installé : on continue d'attendre.
-                    }
+                val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
+                log("SHIZUKU", "Installation via am start shell: ${f.length()} octets")
+
+                val fileUri = uri(f)
+
+                // Accorde les permissions URI à la shell et à l'installeur système
+                val targets = listOf("com.android.shell", "com.google.android.packageinstaller", "com.android.packageinstaller")
+                targets.forEach { pkg ->
+                    try { grantUriPermission(pkg, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
                 }
-                log("SHIZUKU", "Timeout: installation de $packageName non détectée")
+
+                // Commande am start avec tous les extras King
+                val amCmd = "am start" +
+                    " -a android.intent.action.INSTALL_PACKAGE" +
+                    " -d \"$fileUri\"" +
+                    " -t \"application/vnd.android.package-archive\"" +
+                    " -f 0x00000001" +
+                    " --es android.intent.extra.INSTALLER_PACKAGE_NAME \"$VENDING\"" +
+                    " --es android.intent.extra.REFERRER_NAME \"android-app://$VENDING\"" +
+                    " --ei android.intent.extra.INSTALL_REASON 1" +
+                    " --ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
+
+                log("SHIZUKU", "Commande: $amCmd")
+
+                val process = Shizuku.newProcess(arrayOf("sh", "-c", amCmd), null, null)
+                val output = process.inputStream.bufferedReader().readText()
+                val error = process.errorStream.bufferedReader().readText()
+                val exitCode = process.waitFor()
+                process.destroy()
+
+                log("SHIZUKU", "Exit:$exitCode out:$output err:$error")
+
+                runOnUiThread {
+                    if (exitCode == 0) result.success("install_started")
+                    else result.error("SHIZUKU_ERROR", "Exit $exitCode: $error", null)
+                }
             } catch (e: Exception) {
-                log("SHIZUKU", "Surveillance installation ERREUR:${e.message}")
+                log("SHIZUKU", "ERREUR:${e.message}")
+                runOnUiThread { result.error("SHIZUKU_ERROR", e.message, null) }
             }
         }.start()
-    }
-
-    private fun setInstallerViaShizuku(packageName: String) {
-        try {
-            val command = "cmd package set-installer $packageName com.android.vending"
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
-            val exit = process.waitFor()
-            process.destroy()
-            log("SHIZUKU", "set-installer $packageName -> com.android.vending exit=$exit stdout=$stdout stderr=$stderr")
-        } catch (e: Exception) {
-            log("SHIZUKU", "set-installer ERREUR:${e.message}")
-        }
     }
 
     private fun installRoot(path: String) {
         val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
         val p = Runtime.getRuntime().exec("su")
         DataOutputStream(p.outputStream).use { os ->
-            os.writeBytes("pm install -t -i com.android.vending -r \"$path\"\n")
+            os.writeBytes("pm install -t -i $VENDING -r \"$path\"\n")
             os.writeBytes("exit\n"); os.flush()
         }
         val code = p.waitFor()
@@ -314,16 +334,6 @@ class MainActivity : FlutterActivity() {
         p.destroy()
         log("ROOT", "Exit:$code${if (err.isNotEmpty()) " err:$err" else ""}")
         if (code != 0 && err.isNotEmpty()) throw Exception(err)
-
-        val archiveInfo = packageManager.getPackageArchiveInfo(path, PackageManager.GET_META_DATA)
-        archiveInfo?.packageName?.let { pkg ->
-            try {
-                val fix = Runtime.getRuntime().exec(arrayOf("su", "-c", "cmd package set-installer $pkg com.android.vending"))
-                val fixErr = fix.errorStream.bufferedReader().readText()
-                val fixCode = fix.waitFor()
-                log("ROOT", "set-installer $pkg -> com.android.vending exit=$fixCode${if (fixErr.isNotEmpty()) " err:$fixErr" else ""}")
-            } catch (e: Exception) { log("ROOT", "set-installer ERREUR:${e.message}") }
-        }
     }
 
     private fun isRooted(): Boolean {

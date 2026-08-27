@@ -35,29 +35,29 @@ jobs:
                       dx, dy = x - cx, y - cy
                       dist = math.sqrt(dx*dx + dy*dy)
                       if dist < size * 0.45:
-                          aw = size * 0.12; ahw = size * 0.28; ahh = size * 0.22
-                          st = cy - size * 0.28; sb = cy + size * 0.06
-                          by = cy + size * 0.28; bh = size * 0.07
-                          ins = abs(dx) < aw and st < y < sb
-                          inh = y > sb and y < sb + ahh and abs(dx) < ahw * (1 - (y - sb) / ahh)
-                          inb = abs(dx) < ahw and abs(y - by) < bh
+                          aw=size*0.12; ahw=size*0.28; ahh=size*0.22
+                          st=cy-size*0.28; sb=cy+size*0.06
+                          by2=cy+size*0.28; bh=size*0.07
+                          ins=abs(dx)<aw and st<y<sb
+                          inh=y>sb and y<sb+ahh and abs(dx)<ahw*(1-(y-sb)/ahh)
+                          inb=abs(dx)<ahw and abs(y-by2)<bh
                           row.append(bytes([255,255,255,255]) if ins or inh or inb else bytes([26,115,232,255]))
                       else:
                           row.append(bytes([0,0,0,0]))
                   pixels.append(row)
-              def chunk(name, data):
-                  c = struct.pack('>I', len(data)) + name + data
-                  return c + struct.pack('>I', zlib.crc32(name + data) & 0xffffffff)
-              sig = b'\x89PNG\r\n\x1a\n'
-              ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
-              raw = b''.join(b'\x00' + b''.join(p for p in row) for row in pixels)
-              return sig + ihdr + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
-          icons = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
-          for folder, size in icons.items():
-              path = f'android/app/src/main/res/{folder}'
-              os.makedirs(path, exist_ok=True)
+              def chunk(name,data):
+                  c=struct.pack('>I',len(data))+name+data
+                  return c+struct.pack('>I',zlib.crc32(name+data)&0xffffffff)
+              sig=b'\x89PNG\r\n\x1a\n'
+              ihdr=chunk(b'IHDR',struct.pack('>IIBBBBB',size,size,8,6,0,0,0))
+              raw=b''.join(b'\x00'+b''.join(p for p in row) for row in pixels)
+              return sig+ihdr+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+          icons={'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+          for folder,size in icons.items():
+              path=f'android/app/src/main/res/{folder}'
+              os.makedirs(path,exist_ok=True)
               open(f'{path}/ic_launcher.png','wb').write(make_icon(size))
-              print(f'Created {folder}/ic_launcher.png')
+              print(f'Created {folder}')
           "
 
       - name: Flutter pub get
