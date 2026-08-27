@@ -272,49 +272,21 @@ class MainActivity : FlutterActivity() {
         Thread {
             try {
                 val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
-                log("SHIZUKU", "Installation via am start shell: ${f.length()} octets")
+                log("SHIZUKU", "Installation via intent King + set-installer post-install")
 
                 val fileUri = uri(f)
 
-                // Accorde les permissions URI à la shell et à l'installeur système
-                val targets = listOf("com.android.shell", "com.google.android.packageinstaller", "com.android.packageinstaller")
-                targets.forEach { pkg ->
+                // Accorde les permissions à l'installeur système
+                listOf("com.android.shell", "com.google.android.packageinstaller", "com.android.packageinstaller").forEach { pkg ->
                     try { grantUriPermission(pkg, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
                 }
 
-                // Utilise PackageInstaller avec setInstallerPackageName
-                // Shizuku donne les droits élevés pour bypasser la restriction UID
-                val pi = packageManager.packageInstaller
-                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                params.setInstallerPackageName(VENDING)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
-                }
-                val sessionId = pi.createSession(params)
-                val session = pi.openSession(sessionId)
-                try {
-                    session.openWrite("package", 0, f.length()).use { output ->
-                        FileInputStream(f).use { input ->
-                            val buffer = ByteArray(65536); var n: Int
-                            while (input.read(buffer).also { n = it } != -1) output.write(buffer, 0, n)
-                            session.fsync(output)
-                        }
-                    }
-                    val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
-                        action = "com.tomtom.installer.SHIZUKU_COMPLETE"
-                    }
-                    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
-                    else android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                    val pi2 = android.app.PendingIntent.getActivity(this@MainActivity, sessionId, intent, flags)
-                    session.commit(pi2.intentSender)
-                    log("SHIZUKU", "Session PackageInstaller commitée")
-                    runOnUiThread { result.success("install_started") }
-                } catch (e2: Exception) {
-                    session.abandon()
-                    throw e2
-                } finally {
-                    session.close()
+                // Lance l'intent King SANS setInstallerPackageName (bloqué par Android)
+                // Le BroadcastReceiver s'occupera de forcer com.android.vending après via
+                // cmd package set-installer <pkg> com.android.vending
+                runOnUiThread {
+                    startActivityForResult(buildKingIntent(fileUri), REQUEST_INSTALL)
+                    result.success("install_started")
                 }
             } catch (e: Exception) {
                 log("SHIZUKU", "ERREUR:${e.message}")
