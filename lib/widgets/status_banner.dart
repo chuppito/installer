@@ -11,14 +11,10 @@ class StatusBanner extends StatelessWidget {
     final Color color;
     final IconData icon;
     switch (status) {
-      case InstallStatus.success:
-        color = const Color(0xFF0F9D58); icon = Icons.check_circle_rounded;
-      case InstallStatus.error:
-        color = const Color(0xFFE53935); icon = Icons.error_rounded;
-      case InstallStatus.installing:
-        color = const Color(0xFF1A73E8); icon = Icons.downloading_rounded;
-      default:
-        color = const Color(0xFFF4B400); icon = Icons.info_rounded;
+      case InstallStatus.success: color = const Color(0xFF0F9D58); icon = Icons.check_circle_rounded;
+      case InstallStatus.error: color = const Color(0xFFE53935); icon = Icons.error_rounded;
+      case InstallStatus.installing: color = const Color(0xFF1A73E8); icon = Icons.downloading_rounded;
+      default: color = const Color(0xFFF4B400); icon = Icons.info_rounded;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
