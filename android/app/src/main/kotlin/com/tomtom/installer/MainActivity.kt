@@ -204,50 +204,101 @@ class MainActivity : FlutterActivity() {
 
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
         try {
-            val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
-            log("SHIZUKU", "Installation via PackageInstaller+Shizuku: ${f.length()} octets")
+            val f = File(path)
+            if (!f.exists()) throw IOException("Introuvable:$path")
 
-            // Via Shizuku on utilise PackageInstaller avec setInstallerPackageName
-            // Shizuku donne les droits pour bypasser la restriction UID
-            val pi = packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-            params.setInstallerPackageName("com.android.vending")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE)
+            val archiveInfo = packageManager.getPackageArchiveInfo(path, PackageManager.GET_META_DATA)
+            val packageName = archiveInfo?.packageName
+                ?: throw IOException("Impossible de lire le nom du package de l'APK")
+
+            log("SHIZUKU", "Lancement du Package Installer via Shizuku: $packageName (${f.length()} octets)")
+
+            // Donner explicitement l'accès au content:// URI aux Package Installers système.
+            val fileUri = uri(f)
+            val targets = listOf(
+                "com.android.shell",
+                "com.google.android.packageinstaller",
+                "com.android.packageinstaller"
+            )
+            targets.forEach { pkg ->
+                try { grantUriPermission(pkg, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                catch (_: Exception) {}
             }
 
-            val sessionId = pi.createSession(params)
-            val session = pi.openSession(sessionId)
+            pendingShizukuResult = result
 
-            try {
-                session.openWrite("package", 0, f.length()).use { output ->
-                    FileInputStream(f).use { input ->
-                        val buffer = ByteArray(65536); var n: Int
-                        while (input.read(buffer).also { n = it } != -1) output.write(buffer, 0, n)
-                        session.fsync(output)
-                    }
-                }
+            // IMPORTANT : on ne fait pas pm install directement.
+            // On ouvre le Package Installer système afin que l'installation soit
+            // réellement initiée par celui-ci, puis on force ensuite l'installer
+            // de record à com.android.vending avec cmd package set-installer.
+            val uriString = fileUri.toString().replace("'", "\\'")
+            val command = "am start -a android.intent.action.INSTALL_PACKAGE " +
+                "-d '$uriString' " +
+                "-t 'application/vnd.android.package-archive' " +
+                "-f 0x00000001 " +
+                "--es android.intent.extra.INSTALLER_PACKAGE_NAME 'com.android.vending' " +
+                "--es android.intent.extra.REFERRER_NAME 'android-app://com.android.vending' " +
+                "--ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
 
-                val intent = Intent(this, MainActivity::class.java).apply {
-                    action = "com.tomtom.installer.SHIZUKU_COMPLETE"
-                }
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
-                else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            process.destroy()
+            log("SHIZUKU", "am start exit=$exit stdout=$stdout stderr=$stderr")
 
-                val pendingIntent = android.app.PendingIntent.getActivity(this, sessionId, intent, flags)
-                session.commit(pendingIntent.intentSender)
-                log("SHIZUKU", "Session commitée — installation lancée")
-                result.success("install_started")
-            } catch (e: Exception) {
-                session.abandon()
-                throw e
-            } finally {
-                session.close()
+            if (exit != 0) {
+                pendingShizukuResult = null
+                throw IOException(stderr.ifEmpty { stdout.ifEmpty { "am start a échoué ($exit)" } })
             }
+
+            // L'interface d'installation est maintenant gérée par le Package Installer.
+            // On surveille ensuite l'application pour appliquer la correction installer-of-record
+            // dès que l'installation est effectivement terminée.
+            result.success("install_started")
+            pendingShizukuResult = null
+            watchAndFixInstaller(packageName)
         } catch (e: Exception) {
+            pendingShizukuResult = null
             log("SHIZUKU", "ERREUR:${e.message}")
             result.error("SHIZUKU_ERROR", e.message, null)
+        }
+    }
+
+    private fun watchAndFixInstaller(packageName: String) {
+        Thread {
+            try {
+                // Le Package Installer affiche une confirmation utilisateur.
+                // On attend jusqu'à 90 secondes que le package soit effectivement présent
+                // avant d'appliquer la correction privilégiée.
+                repeat(90) {
+                    Thread.sleep(1000)
+                    try {
+                        packageManager.getPackageInfo(packageName, 0)
+                        setInstallerViaShizuku(packageName)
+                        return@Thread
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        // Pas encore installé : on continue d'attendre.
+                    }
+                }
+                log("SHIZUKU", "Timeout: installation de $packageName non détectée")
+            } catch (e: Exception) {
+                log("SHIZUKU", "Surveillance installation ERREUR:${e.message}")
+            }
+        }.start()
+    }
+
+    private fun setInstallerViaShizuku(packageName: String) {
+        try {
+            val command = "cmd package set-installer $packageName com.android.vending"
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            process.destroy()
+            log("SHIZUKU", "set-installer $packageName -> com.android.vending exit=$exit stdout=$stdout stderr=$stderr")
+        } catch (e: Exception) {
+            log("SHIZUKU", "set-installer ERREUR:${e.message}")
         }
     }
 
@@ -263,6 +314,16 @@ class MainActivity : FlutterActivity() {
         p.destroy()
         log("ROOT", "Exit:$code${if (err.isNotEmpty()) " err:$err" else ""}")
         if (code != 0 && err.isNotEmpty()) throw Exception(err)
+
+        val archiveInfo = packageManager.getPackageArchiveInfo(path, PackageManager.GET_META_DATA)
+        archiveInfo?.packageName?.let { pkg ->
+            try {
+                val fix = Runtime.getRuntime().exec(arrayOf("su", "-c", "cmd package set-installer $pkg com.android.vending"))
+                val fixErr = fix.errorStream.bufferedReader().readText()
+                val fixCode = fix.waitFor()
+                log("ROOT", "set-installer $pkg -> com.android.vending exit=$fixCode${if (fixErr.isNotEmpty()) " err:$fixErr" else ""}")
+            } catch (e: Exception) { log("ROOT", "set-installer ERREUR:${e.message}") }
+        }
     }
 
     private fun isRooted(): Boolean {

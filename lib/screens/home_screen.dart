@@ -221,12 +221,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           if (_path == null)
             _mainBtn('Choisir un fichier', Icons.folder_open_rounded, cs.primary, _pick, false)
           else Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _mainBtn(_split ? 'Installer (split)' : 'Installer', Icons.system_update_alt_rounded, const Color(0xFF1A73E8), busy ? null : () => _install(InstallMethod.standard), busy),
+            _mainBtn(_split ? 'Installer (split)' : 'Package Installer', Icons.system_update_alt_rounded, const Color(0xFF1A73E8), busy ? null : () => _install(InstallMethod.standard), busy),
             if (!_split) ...[
               const SizedBox(height: 12),
               _div(cs),
               const SizedBox(height: 12),
-              _altBtn('Shizuku (universel)', 'Honor, Nothing, Pixel, Redmagic…', Icons.vpn_key_rounded, Colors.teal,
+              _altBtn('Shizuku + correction Play Store', 'Package Installer puis set-installer → Play Store', Icons.vpn_key_rounded, Colors.teal,
                 busy ? null : () => _install(InstallMethod.shizuku),
                 info: _shizukuDialog),
               const SizedBox(height: 10),
@@ -234,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 10),
               _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange, busy ? null : () => _install(InstallMethod.hyperOS)),
               const SizedBox(height: 10),
-              _altBtn('Root', 'pm install -i com.android.vending', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
+              _altBtn('Root', 'pm install -i puis set-installer → Play Store', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
                 busy ? null : () {
                   if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'), actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))]));
                   else _install(InstallMethod.oppoRoot);
