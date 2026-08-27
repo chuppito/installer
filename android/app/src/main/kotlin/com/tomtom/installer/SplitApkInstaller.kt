@@ -42,10 +42,11 @@ class SplitApkInstaller(private val activity: Activity) {
 
     private fun installSplitsRoot(apks: List<File>, callback: InstallCallback) {
         try {
-            val paths = apks.joinToString(" ") { ""${it.absolutePath}"" }
+            val pathList = apks.joinToString(" ") { it.absolutePath }
+            val cmd = "pm install-multiple -t -i com.android.vending -r $pathList"
             val process = Runtime.getRuntime().exec("su")
             val os = java.io.DataOutputStream(process.outputStream)
-            os.writeBytes("pm install-multiple -t -i "com.android.vending" -r $paths
+            os.writeBytes(cmd + "
 ")
             os.writeBytes("exit
 ")
@@ -56,7 +57,6 @@ class SplitApkInstaller(private val activity: Activity) {
             if (code == 0) callback.onSuccess()
             else callback.onError("Erreur root: $err")
         } catch (e: Exception) {
-            // Fallback Session API si root échoue
             installSplits(apks, callback)
         }
     }
