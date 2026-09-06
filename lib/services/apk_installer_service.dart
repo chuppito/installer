@@ -39,6 +39,8 @@ class ApkInstallerService {
   static Future<bool> isShizukuAvailable() async { try { return await _ch.invokeMethod<bool>('isShizukuAvailable') ?? false; } catch (_) { return false; } }
   static Future<bool> isShizukuGranted() async { try { return await _ch.invokeMethod<bool>('isShizukuGranted') ?? false; } catch (_) { return false; } }
   static Future<String?> getLogPath() async { try { return await _ch.invokeMethod<String>('getLogPath'); } catch (_) { return null; } }
+  static Future<Map<dynamic, dynamic>?> getInstallSourceInfo(String packageName) async { try { return await _ch.invokeMethod<Map<dynamic, dynamic>>('getInstallSourceInfo', {'packageName': packageName}); } catch (_) { return null; } }
+  static Future<Map<dynamic, dynamic>?> verifyInstallSource(String packageName) async { try { return await _ch.invokeMethod<Map<dynamic, dynamic>>('verifyInstallSource', {'packageName': packageName}); } catch (_) { return null; } }
   static Future<void> clearLog() async { try { await _ch.invokeMethod('clearLog'); } catch (_) {} }
   static Future<bool> canInstall() async => await Permission.requestInstallPackages.isGranted;
   static bool isSplit(String p) => ['apkm', 'xapk', 'apks'].contains(p.split('.').last.toLowerCase());
