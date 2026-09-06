@@ -3,16 +3,15 @@ package com.tomtom.installer
 import android.os.RemoteException
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import rikka.shizuku.Shizuku
 
 /**
- * Shizuku UserService: executes commands as shell (UID 2000) with Shizuku,
- * or as root when Shizuku is backed by Sui/root.
+ * Shizuku UserService.
  *
- * This deliberately does not use Shizuku.newProcess(), which is private in
- * recent Shizuku API versions and is scheduled for removal.
+ * This process is started by Shizuku with shell UID (2000) when Shizuku is
+ * backed by ADB, or root UID (0) when backed by Sui/root.
  */
 class ShizukuCommandService : IShizukuCommandService.Stub() {
+
     override fun execute(command: String): String {
         return try {
             val process = ProcessBuilder("/system/bin/sh", "-c", command)
