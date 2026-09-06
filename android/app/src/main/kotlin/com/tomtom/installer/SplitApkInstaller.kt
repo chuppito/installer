@@ -53,8 +53,10 @@ class SplitApkInstaller(private val activity: Activity) {
             val err = process.errorStream.bufferedReader().readText()
             process.destroy()
             if (exitCode == 0) callback.onSuccess()
-            else installSplits(apks, callback)
-        } catch (e: Exception) { installSplits(apks, callback) }
+            else callback.onError("Erreur root: " + err)
+        } catch (e: Exception) {
+            installSplits(apks, callback)
+        }
     }
 
     private fun extractApks(archive: File): List<File> {
