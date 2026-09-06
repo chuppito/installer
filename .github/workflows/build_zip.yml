@@ -1,0 +1,12 @@
+name: Auto Unzip and Commit
+
+on:
+  push:
+    paths:
+      - '**.zip'
+
+jobs:
+  call-reusable:
+    uses: chuppito/github-workflows/.github/workflows/build_zip-reusable.yml@main
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
