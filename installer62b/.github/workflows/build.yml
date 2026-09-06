@@ -1,0 +1,84 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Generate launcher icons
+        run: |
+          python3 -c "
+          import struct, zlib, os, math
+          def make_icon(size):
+              cx, cy = size // 2, size // 2
+              pixels = []
+              for y in range(size):
+                  row = []
+                  for x in range(size):
+                      dx, dy = x - cx, y - cy
+                      dist = math.sqrt(dx*dx + dy*dy)
+                      if dist < size * 0.45:
+                          aw = size * 0.12; ahw = size * 0.28; ahh = size * 0.22
+                          st = cy - size * 0.28; sb = cy + size * 0.06
+                          by = cy + size * 0.28; bh = size * 0.07
+                          ins = abs(dx) < aw and st < y < sb
+                          inh = y > sb and y < sb + ahh and abs(dx) < ahw * (1 - (y - sb) / ahh)
+                          inb = abs(dx) < ahw and abs(y - by) < bh
+                          row.append(bytes([255,255,255,255]) if ins or inh or inb else bytes([26,115,232,255]))
+                      else:
+                          row.append(bytes([0,0,0,0]))
+                  pixels.append(row)
+              def chunk(name, data):
+                  c = struct.pack('>I', len(data)) + name + data
+                  return c + struct.pack('>I', zlib.crc32(name + data) & 0xffffffff)
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
+              raw = b''.join(b'\x00' + b''.join(p for p in row) for row in pixels)
+              return sig + ihdr + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+          icons = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+          for folder, size in icons.items():
+              path = f'android/app/src/main/res/{folder}'
+              os.makedirs(path, exist_ok=True)
+              open(f'{path}/ic_launcher.png','wb').write(make_icon(size))
+              print(f'Created {folder}/ic_launcher.png')
+          "
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 90
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: "APK compilé automatiquement"
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
