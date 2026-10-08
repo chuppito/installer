@@ -1,8 +1,8 @@
 package com.tomtom.installer
 
-import android.app.Activity
+import android.app.AlertDialog
+import android.content.pm.PackageInstaller
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -28,14 +28,12 @@ import rikka.shizuku.Shizuku
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.tomtom.installer/install"
-    private val REQUEST_INSTALL = 1001
     private val SHIZUKU_CODE = 1002
     private val VENDING = "com.android.vending"
     private val VERIFY_DELAY_MS = 900L
 
     private var watchedPackage: String? = null
     private var privilegedInstallRunning = false
-    private var pendingResult: MethodChannel.Result? = null
     private var pendingShizukuResult: MethodChannel.Result? = null
     private var pendingShizukuPath: String? = null
     private lateinit var splitInstaller: SplitApkInstaller
@@ -142,6 +140,7 @@ class MainActivity : FlutterActivity() {
         splitInstaller = SplitApkInstaller(this)
         try { Shizuku.addRequestPermissionResultListener(shizukuListener) } catch (_: Exception) {}
 
+        handleSplitResult(intent)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
@@ -155,33 +154,49 @@ class MainActivity : FlutterActivity() {
 
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSplitResult(intent)
+    }
+
+    private fun handleSplitResult(intent: Intent?) {
+        if (intent?.action != "SPLIT_DONE") return
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            @Suppress("DEPRECATION")
+            val confirmation = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+            if (confirmation != null) startActivity(confirmation)
+            else log("SPLIT", "Confirmation Android absente")
+        } else if (status == PackageInstaller.STATUS_SUCCESS) {
+            val installedPackage = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME)
+            installedPackage?.let { verifyAttribution(it, "SPLIT_INSTALL") }
+            val launch = installedPackage?.let { packageManager.getLaunchIntentForPackage(it) }
+            AlertDialog.Builder(this).apply {
+                setTitle("Application installée")
+                setMessage("L’installation est terminée.")
+                setNegativeButton("OK") { _, _ -> }
+                if (launch != null) setPositiveButton("Ouvrir") { _, _ -> startActivity(launch) }
+            }.show()
+        } else {
+            val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Installation échouée"
+            log("SPLIT", "Échec: $message")
+            AlertDialog.Builder(this).setTitle("Installation interrompue")
+                .setMessage(message).setPositiveButton("OK") { _, _ -> }.show()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         try { Shizuku.removeRequestPermissionResultListener(shizukuListener) } catch (_: Exception) {}
         try { unregisterReceiver(packageAddedReceiver) } catch (_: Exception) {}
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_INSTALL) {
-            val result = pendingResult
-            pendingResult = null
-            when (resultCode) {
-                Activity.RESULT_OK -> { log("RESULT", "Succès ✓"); result?.success("install_success") }
-                Activity.RESULT_CANCELED -> { log("RESULT", "Annulée"); result?.success("install_cancelled") }
-                Activity.RESULT_FIRST_USER -> { log("RESULT", "Échec"); result?.success("install_failed") }
-                else -> { log("RESULT", "Code:$resultCode"); result?.success("install_unknown") }
-            }
-        }
-    }
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "installApk" -> doInstall(call.argument("path"), result, "STANDARD") { installApk(it) }
-                "installApkOppo" -> doInstall(call.argument("path"), result, "OPPO") { installOppo(it) }
-                "installApkHyperOS" -> doInstall(call.argument("path"), result, "HYPEROS") { installHyperOS(it) }
+                "installApk" -> doInstall(call.argument("path"), result)
                 "installApkShizuku" -> {
                     val path = call.argument<String>("path")
                     if (path == null) {
@@ -203,11 +218,6 @@ class MainActivity : FlutterActivity() {
                         doInstallShizuku(path, result)
                     }
                 }
-                "installApkRoot" -> {
-                    val path = call.argument<String>("path")
-                    if (path == null) result.error("INVALID_PATH", "null", null)
-                    else doInstallPrivileged(path, result, "ROOT")
-                }
                 "installSplitApk" -> {
                     val path = call.argument<String>("path")
                     if (installationBusy()) {
@@ -217,7 +227,9 @@ class MainActivity : FlutterActivity() {
                         splitInstaller.install(path, object : SplitApkInstaller.InstallCallback {
                             override fun onSuccess() { log("SPLIT", "OK"); result.success("install_started") }
                             override fun onError(msg: String) {
-                                if (msg.startsWith("SINGLE:")) { pendingResult = result; installApk(msg.removePrefix("SINGLE:")) }
+                                if (msg.startsWith("SINGLE:")) {
+                                    doInstall(msg.removePrefix("SINGLE:"), result)
+                                }
                                 else { log("SPLIT", "ERREUR:$msg"); result.error("SPLIT_ERROR", msg, null) }
                             }
                         })
@@ -233,9 +245,6 @@ class MainActivity : FlutterActivity() {
                     if (pkg == null) result.error("INVALID_PACKAGE", "packageName null", null)
                     else verifyAttribution(pkg, "MANUAL_VERIFY") { result.success(it) }
                 }
-                "isRooted" -> result.success(isRooted())
-                "isColorOS" -> result.success(isColorOS())
-                "isHyperOS" -> result.success(isHyperOS())
                 "isShizukuAvailable" -> result.success(isShizukuAvailable())
                 "isShizukuGranted" -> result.success(isShizukuGranted())
                 "getLogPath" -> result.success(logFile.absolutePath)
@@ -245,18 +254,25 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun doInstall(path: String?, result: MethodChannel.Result, tag: String, action: (String) -> Unit) {
+    private fun doInstall(path: String?, result: MethodChannel.Result) {
         if (installationBusy()) {
             result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
             return
         }
-        if (path != null) {
-            try {
-                watchedPackage = getPackageNameFromApk(path)
-                log(tag, "Début:$path"); pendingResult = result; action(path)
-            }
-            catch (e: Exception) { log(tag, "ERREUR:${e.message}"); pendingResult = null; result.error("INSTALL_ERROR", e.message, null) }
-        } else result.error("INVALID_PATH", "null", null)
+        if (path == null) {
+            result.error("INVALID_PATH", "null", null)
+            return
+        }
+        try {
+            watchedPackage = getPackageNameFromApk(path)
+            log("STANDARD", "Début: $path")
+            installApk(path)
+            // Do not request an activity result: Android keeps its final OK / Open dialog.
+            result.success("native_installer_opened")
+        } catch (e: Exception) {
+            log("STANDARD", "ERREUR: ${e.message}")
+            result.error("INSTALL_ERROR", e.message, null)
+        }
     }
 
     private fun uri(f: File): Uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", f)
@@ -268,7 +284,6 @@ class MainActivity : FlutterActivity() {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
             putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
-            putExtra(Intent.EXTRA_RETURN_RESULT, true)
             putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, VENDING)
             putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://$VENDING"))
             putExtra("android.intent.extra.REFERRER_NAME", "android-app://$VENDING")
@@ -279,47 +294,18 @@ class MainActivity : FlutterActivity() {
         val f = File(path)
         if (!f.exists()) throw IOException("Introuvable:$path")
         log("STANDARD", "${f.length()} octets")
-        startActivityForResult(buildKingIntent(uri(f)), REQUEST_INSTALL)
-    }
-
-    private fun installOppo(path: String) {
-        val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
-        log("OPPO", "${f.length()} octets")
-        packageManager.setComponentEnabledSetting(
-            ComponentName(packageName, "$packageName.OppoTrick"),
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP
-        )
-        startActivityForResult(Intent(Intent.ACTION_VIEW).apply {
-            setClassName(packageName, "$packageName.OppoTrick")
-            setDataAndType(uri(f), "application/vnd.android.package-archive")
-            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-            putExtra(Intent.EXTRA_RETURN_RESULT, true)
-        }, REQUEST_INSTALL)
-    }
-
-    private fun installHyperOS(path: String) {
-        val f = File(path); if (!f.exists()) throw IOException("Introuvable:$path")
-        try {
-            packageManager.setComponentEnabledSetting(
-                ComponentName("com.miui.securitycenter", "com.miui.permcenter.install.InstallPackageActivity"),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP
-            )
-            log("HYPEROS", "SecurityCenter désactivé")
-        } catch (e: Exception) { log("HYPEROS", "SecurityCenter non désactivable:${e.message}") }
-        startActivityForResult(buildKingIntent(uri(f)).also {
-            it.putExtra("miui_extra_install_enable_notification", false)
-            it.putExtra("miui.intent.extra.INSTALLER_PACKAGE_NAME", VENDING)
-        }, REQUEST_INSTALL)
+        startActivity(buildKingIntent(uri(f)))
     }
 
     private fun installationBusy(): Boolean = privilegedInstallRunning ||
-        pendingResult != null || pendingShizukuResult != null
+        pendingShizukuResult != null
 
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
-        doInstallPrivileged(path, result, "SHIZUKU")
+        openWithShizuku(path, result)
     }
 
-    private fun doInstallPrivileged(path: String, result: MethodChannel.Result, tag: String) {
+    private fun openWithShizuku(path: String, result: MethodChannel.Result) {
+        val tag = "SHIZUKU"
         if (installationBusy()) {
             result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
             return
@@ -341,18 +327,12 @@ class MainActivity : FlutterActivity() {
                 val fileUri = uri(file)
                 grantInstallerAccess(fileUri)
                 log(tag, "Ouverture du programme d’installation Android pour $targetPackage")
-                if (tag == "SHIZUKU") {
-                    val intent = buildKingIntent(fileUri).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        // Keep the native completion dialog with OK / Open.
-                        removeExtra(Intent.EXTRA_RETURN_RESULT)
-                        putExtra("android.content.pm.extra.INSTALL_REASON", 1)
-                    }
-                    val code = NativeInstallerLauncher.launchWithShizuku(intent)
-                    log(tag, "startActivityAsUser via Shizuku -> code=$code")
-                } else {
-                    launchNativeInstallerRoot(fileUri)
+                val intent = buildKingIntent(fileUri).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    putExtra("android.content.pm.extra.INSTALL_REASON", 1)
                 }
+                val code = NativeInstallerLauncher.launchWithShizuku(intent)
+                log(tag, "startActivityAsUser via Shizuku -> code=$code")
                 runOnUiThread {
                     privilegedInstallRunning = false
                     // Opening the installer is not confirmation of installation.
@@ -387,48 +367,4 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun launchNativeInstallerRoot(fileUri: Uri) {
-        val command = "am start --user ${android.os.Process.myUid() / 100000} " +
-            "-a android.intent.action.INSTALL_PACKAGE " +
-            "-d ${shellQuote(fileUri.toString())} -t application/vnd.android.package-archive " +
-            "-f 0x10000001 " +
-            "--es android.intent.extra.INSTALLER_PACKAGE_NAME $VENDING " +
-            "--es android.intent.extra.REFERRER_NAME android-app://$VENDING " +
-            "--ei android.intent.extra.INSTALL_REASON 1 " +
-            "--ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
-        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-        try {
-            process.outputStream.close()
-            val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-            val code = process.waitFor()
-            log("ROOT", "am start -> exit=$code $output")
-            if (code != 0 || output.lineSequence().any { it.trimStart().startsWith("Error:") }) {
-                throw IOException("Programme d’installation non ouvert: exit=$code\n$output")
-            }
-        } finally {
-            process.destroy()
-        }
-    }
-
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
-    private fun isRooted(): Boolean {
-        val su = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su", "/data/adb/ksu/bin/su", "/data/adb/magisk/su")
-        return su.any { File(it).exists() } || try {
-            Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su")).inputStream.bufferedReader().readLine() != null
-        } catch (_: Exception) { false }
-    }
-
-    private fun isColorOS(): Boolean {
-        val m = Build.MANUFACTURER.lowercase(); val b = Build.BRAND.lowercase()
-        return m.contains("oppo") || m.contains("realme") || b.contains("oppo") ||
-            b.contains("realme") || b.contains("oneplus") ||
-            System.getProperty("ro.build.version.opporom") != null
-    }
-
-    private fun isHyperOS(): Boolean {
-        val m = Build.MANUFACTURER.lowercase(); val b = Build.BRAND.lowercase()
-        return m.contains("xiaomi") || b.contains("xiaomi") || b.contains("redmi") ||
-            b.contains("poco") || System.getProperty("ro.miui.ui.version.name") != null
-    }
 }

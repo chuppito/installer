@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
-import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.ZipFile
@@ -24,39 +23,9 @@ class SplitApkInstaller(private val activity: Activity) {
             when {
                 apks.isEmpty() -> callback.onError("Aucun APK trouvé")
                 apks.size == 1 -> callback.onError("SINGLE:" + apks[0].absolutePath)
-                else -> {
-                    if (isRooted()) installSplitsRoot(apks, callback)
-                    else installSplits(apks, callback)
-                }
+                else -> installSplits(apks, callback)
             }
         } catch (e: Exception) { callback.onError("Erreur: " + e.message) }
-    }
-
-    private fun isRooted(): Boolean {
-        val paths = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su")
-        return paths.any { File(it).exists() } || try {
-            Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
-                .inputStream.bufferedReader().readLine() != null
-        } catch (_: Exception) { false }
-    }
-
-    private fun installSplitsRoot(apks: List<File>, callback: InstallCallback) {
-        try {
-            val pathList = apks.joinToString(" ") { it.absolutePath }
-            val cmd = "pm install-multiple -t -i com.android.vending -r " + pathList
-            val process = Runtime.getRuntime().exec("su")
-            val os = DataOutputStream(process.outputStream)
-            os.writeBytes(cmd + "\n")
-            os.writeBytes("exit\n")
-            os.flush()
-            val exitCode = process.waitFor()
-            val err = process.errorStream.bufferedReader().readText()
-            process.destroy()
-            if (exitCode == 0) callback.onSuccess()
-            else callback.onError("Erreur root: " + err)
-        } catch (e: Exception) {
-            installSplits(apks, callback)
-        }
     }
 
     private fun extractApks(archive: File): List<File> {

@@ -16,7 +16,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   String? _path, _name;
   int? _size;
-  bool _split = false, _rooted = false, _colorOS = false, _hyperOS = false, _shizuku = false;
+  bool _split = false, _shizuku = false;
   InstallStatus _status = InstallStatus.idle;
   String _msg = '';
   String? _logPath;
@@ -33,13 +33,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _init() async {
-    final r = await ApkInstallerService.isRooted();
-    final c = await ApkInstallerService.isColorOS();
-    final h = await ApkInstallerService.isHyperOS();
     final s = await ApkInstallerService.isShizukuAvailable();
     final l = await ApkInstallerService.getLogPath();
     if (!mounted) return;
-    setState(() { _rooted = r; _colorOS = c; _hyperOS = h; _shizuku = s; _logPath = l; });
+    setState(() { _shizuku = s; _logPath = l; });
   }
 
   @override
@@ -86,10 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       } else {
         code = switch (method) {
           InstallMethod.standard => await ApkInstallerService.installApk(_path!),
-          InstallMethod.oppoNoRoot => await ApkInstallerService.installApkOppo(_path!),
-          InstallMethod.hyperOS => await ApkInstallerService.installApkHyperOS(_path!),
           InstallMethod.shizuku => await ApkInstallerService.installApkShizuku(_path!),
-          InstallMethod.oppoRoot => await ApkInstallerService.installApkRoot(_path!),
         };
       }
       switch (code) {
@@ -167,10 +161,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       backgroundColor: cs.surface,
       appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0,
         title: Row(children: [
-          Container(width: 36, height: 36, decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(8)),
-            child: const Icon(Icons.system_update_alt_rounded, color: Colors.white, size: 20)),
+          Image.asset('assets/installer_icon.png', width: 36, height: 36),
           const SizedBox(width: 10),
-          const Text('Installer 1.1.3', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+          const Text('Installer 1.2.0', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
         ]),
         actions: [
           IconButton(onPressed: _logDialog, icon: const Icon(Icons.bug_report_outlined), tooltip: 'Log'),
@@ -192,12 +185,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ])),
 
           // Badges
-          if (_colorOS || _hyperOS || _rooted || _shizuku || _split) ...[
+          if (_shizuku || _split) ...[
             const SizedBox(height: 10),
             Wrap(spacing: 8, runSpacing: 6, children: [
-              if (_colorOS) _badge('ColorOS', Colors.orange),
-              if (_hyperOS) _badge('HyperOS', Colors.deepOrange),
-              if (_rooted) _badge('Root', Colors.green),
               if (_shizuku) _badge('Shizuku ✓', Colors.teal),
               if (_split) _badge('Split APK', Colors.purple),
             ]),
@@ -232,33 +222,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           const SizedBox(height: 20),
           if (_msg.isNotEmpty) ...[StatusBanner(status: _status, message: _msg), const SizedBox(height: 16)],
 
-          // Boutons
+          // Installation methods: Shizuku first, then the standard Android installer.
           if (_path == null)
             _mainBtn('Choisir un fichier', Icons.folder_open_rounded, cs.primary, _pick, false)
           else Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _mainBtn(_split ? 'Installer (split)' : 'Package Installer', Icons.system_update_alt_rounded, const Color(0xFF1A73E8), busy ? null : () => _install(InstallMethod.standard), busy),
             if (!_split) ...[
-              const SizedBox(height: 12),
-              _div(cs),
-              const SizedBox(height: 12),
-              _altBtn('Shizuku', 'Ouvre le programme d’installation Android', Icons.vpn_key_rounded, Colors.teal,
-                busy ? null : () => _install(InstallMethod.shizuku),
-                info: _shizukuDialog),
-              const SizedBox(height: 10),
-              _altBtn('Oppo / Realme (ColorOS)', 'OppoTrick — bypass scanner', Icons.phonelink_setup_rounded, Colors.orange, busy ? null : () => _install(InstallMethod.oppoNoRoot)),
-              const SizedBox(height: 10),
-              _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange, busy ? null : () => _install(InstallMethod.hyperOS)),
-              const SizedBox(height: 10),
-              _altBtn('Root', 'Ouvre le programme d’installation Android', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
-                busy ? null : () {
-                  if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'), actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))]));
-                  else _install(InstallMethod.oppoRoot);
-                }, disabled: !_rooted),
+              _mainBtn('Shizuku', Icons.vpn_key_rounded, Colors.teal,
+                busy ? null : () => _install(InstallMethod.shizuku), busy),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(onPressed: _shizukuDialog,
+                  icon: const Icon(Icons.info_outline, size: 16),
+                  label: const Text('Comment activer Shizuku ?'))),
+              const SizedBox(height: 4),
             ],
+            _mainBtn(_split ? 'Package Installer (split)' : 'Package Installer',
+              Icons.system_update_alt_rounded, const Color(0xFF1A73E8),
+              busy ? null : () => _install(InstallMethod.standard), busy),
           ]),
 
           const SizedBox(height: 28),
-          _compat(cs),
           const SizedBox(height: 20),
         ],
       ))),
@@ -270,12 +252,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: c.withOpacity(0.4))),
     child: Text(l, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: c)));
 
-  Widget _div(ColorScheme cs) => Row(children: [
-    Expanded(child: Divider(color: cs.outline.withOpacity(0.3))),
-    Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('Méthodes alternatives', style: TextStyle(fontSize: 11, color: cs.onSurface.withOpacity(0.4)))),
-    Expanded(child: Divider(color: cs.outline.withOpacity(0.3))),
-  ]);
-
   Widget _mainBtn(String l, IconData ic, Color c, VoidCallback? fn, bool loading) => SizedBox(height: 56,
     child: FilledButton(onPressed: fn,
       style: FilledButton.styleFrom(backgroundColor: c, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
@@ -283,30 +259,4 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ? const Row(mainAxisAlignment: MainAxisAlignment.center, children: [SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)), SizedBox(width: 10), Text('En attente…', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700))])
           : Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(ic, size: 20), const SizedBox(width: 10), Text(l, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))])));
 
-  Widget _altBtn(String l, String sub, IconData ic, Color c, VoidCallback? fn, {bool disabled = false, VoidCallback? info}) => Opacity(
-    opacity: disabled ? 0.5 : 1,
-    child: OutlinedButton(onPressed: fn,
-      style: OutlinedButton.styleFrom(foregroundColor: c, side: BorderSide(color: c.withOpacity(0.5), width: 1.5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10)),
-      child: Row(children: [
-        Icon(ic, size: 20, color: c), const SizedBox(width: 10),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(l, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: c)),
-          Text(sub, style: TextStyle(fontSize: 11, color: c.withOpacity(0.7))),
-        ])),
-        if (info != null) GestureDetector(onTap: info, child: Icon(Icons.info_outline, size: 18, color: c.withOpacity(0.7)))
-        else Icon(Icons.arrow_forward_ios_rounded, size: 13, color: c.withOpacity(0.5)),
-      ])));
-
-  Widget _compat(ColorScheme cs) {
-    const items = [('Pixel', Icons.smartphone_rounded), ('Samsung', Icons.phone_android_rounded), ('OnePlus', Icons.devices_rounded), ('Oppo', Icons.phone_iphone_rounded), ('Realme', Icons.phone_rounded), ('Xiaomi', Icons.phone_android_rounded), ('LineageOS', Icons.settings_applications_rounded), ('Honor', Icons.phone_rounded), ('Nothing', Icons.phone_android_rounded), ('Redmagic', Icons.videogame_asset_rounded)];
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Méthodes selon le fabricant', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withOpacity(0.5))),
-      const SizedBox(height: 8),
-      Wrap(spacing: 8, runSpacing: 8, children: items.map((b) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(20)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(b.$2, size: 13, color: cs.primary), const SizedBox(width: 4), Text(b.$1, style: TextStyle(fontSize: 12, color: cs.onSurface.withOpacity(0.8)))]),
-      )).toList()),
-    ]);
-  }
 }
