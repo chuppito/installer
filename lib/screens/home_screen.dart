@@ -170,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           Container(width: 36, height: 36, decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(8)),
             child: const Icon(Icons.system_update_alt_rounded, color: Colors.white, size: 20)),
           const SizedBox(width: 10),
-          const Text('Installer 1.1.2', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+          const Text('Installer 1.1.3', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
         ]),
         actions: [
           IconButton(onPressed: _logDialog, icon: const Icon(Icons.bug_report_outlined), tooltip: 'Log'),

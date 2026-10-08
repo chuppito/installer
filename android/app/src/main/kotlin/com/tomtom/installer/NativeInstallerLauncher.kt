@@ -7,6 +7,7 @@ import android.os.IBinder
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 import java.io.IOException
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 /**
  * Starts Android's real Package Installer through Shizuku rather than silently
@@ -17,6 +18,15 @@ internal object NativeInstallerLauncher {
 
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     fun launchWithShizuku(intent: Intent): Int {
+        // Shizuku changes the Binder caller, but the reflection below still
+        // runs in this application's process and is subject to hidden-API rules.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val enabled = HiddenApiBypass.addHiddenApiExemptions(
+                "Landroid/app/IActivityTaskManager",
+                "Landroid/app/IActivityManager"
+            )
+            if (!enabled) throw IOException("Accès aux interfaces internes Android non autorisé")
+        }
         val useTaskManager = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         val serviceName = if (useTaskManager) "activity_task" else "activity"
         val stubName = if (useTaskManager) {

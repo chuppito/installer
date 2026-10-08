@@ -360,7 +360,7 @@ class MainActivity : FlutterActivity() {
                 }
             } catch (e: Exception) {
                 val message = e.cause?.message ?: e.message ?: "Ouverture impossible"
-                log(tag, "ERREUR: $message")
+                log(tag, "ERREUR: ${e.javaClass.simpleName}: $message")
                 runOnUiThread {
                     privilegedInstallRunning = false
                     result.error("${tag}_ERROR", message, null)
