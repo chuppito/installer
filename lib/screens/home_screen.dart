@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/apk_installer_service.dart';
+import '../services/app_update_service.dart';
 import '../widgets/apk_card.dart';
 import '../widgets/status_banner.dart';
 
@@ -20,6 +21,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   InstallStatus _status = InstallStatus.idle;
   String _msg = '';
   String? _logPath;
+  AppVersion? _version;
+  bool _checkingUpdate = false;
   late AnimationController _anim;
   late Animation<double> _fade;
 
@@ -30,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _anim = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
     _fade = CurvedAnimation(parent: _anim, curve: Curves.easeInOut);
     _init();
+    _checkUpdate(automatic: true);
   }
 
   Future<void> _init() async {
@@ -37,6 +41,49 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final l = await ApkInstallerService.getLogPath();
     if (!mounted) return;
     setState(() { _shizuku = s; _logPath = l; });
+  }
+
+  Future<void> _checkUpdate({bool automatic = false}) async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    try {
+      final installed = _version ?? await AppUpdateService.installedVersion();
+      if (!mounted) return;
+      setState(() => _version = installed);
+      final update = await AppUpdateService.check(installed);
+      if (!mounted) return;
+      if (update == null) {
+        if (!automatic) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Installer ${installed.name} : aucune mise à jour disponible.')),
+        );
+        return;
+      }
+      final download = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+        title: const Text('Mise à jour disponible'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Version installée : ${installed.name} (${installed.code})'),
+            Text('Nouvelle version : ${update.version} (${update.code})'),
+            if (update.notes.isNotEmpty) ...[const SizedBox(height: 12), Text(update.notes)],
+            const SizedBox(height: 12),
+            const Text('Télécharge l’APK, puis ouvre-le pour confirmer la mise à jour dans Android.'),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Télécharger')),
+        ],
+      ));
+      if (download == true) await AppUpdateService.download(update);
+    } catch (e) {
+      if (mounted && !automatic) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Impossible de vérifier les mises à jour : $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
   }
 
   @override
@@ -163,9 +210,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         title: Row(children: [
           Image.asset('assets/installer_icon.png', width: 36, height: 36),
           const SizedBox(width: 10),
-          const Text('Installer 1.2.0', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+          Expanded(child: Text(_version == null ? 'Installer' : 'Installer ${_version!.name}', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20), overflow: TextOverflow.ellipsis)),
         ]),
         actions: [
+          IconButton(
+            onPressed: _checkingUpdate ? null : () => _checkUpdate(),
+            icon: _checkingUpdate
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.system_update_rounded),
+            tooltip: 'Vérifier les mises à jour',
+          ),
           IconButton(onPressed: _logDialog, icon: const Icon(Icons.bug_report_outlined), tooltip: 'Log'),
           if (_path != null) IconButton(onPressed: _status == InstallStatus.installing ? null : _reset, icon: const Icon(Icons.close_rounded)),
           const SizedBox(width: 4),

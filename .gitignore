@@ -10,3 +10,14 @@ android/.gradle/
 *.apk
 *.aab
 .DS_Store
+
+# Private signing material (use GitHub Actions secrets)
+*.jks
+*.keystore
+*.p12
+*.pfx
+android/key.properties
+android/keystore.properties
+*-key-base64.txt
+__pycache__/
+*.pyc

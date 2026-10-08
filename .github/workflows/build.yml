@@ -2,12 +2,21 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize main builds so an older build cannot replace a newer latest release.
+concurrency:
+  group: installer-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -22,29 +31,104 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Release metadata
+        id: metadata
+        run: python tools/prepare_release.py metadata --run-number "$GITHUB_RUN_NUMBER" --output "$GITHUB_OUTPUT"
+
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Flutter tests
-        run: flutter test
+      - name: Tests
+        run: |
+          python -m unittest discover -s tools/tests
+          flutter test
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Restore private signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          required = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
+          missing = [name for name in required if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Missing signing secrets: ' + ', '.join(missing) + '. See docs/UPDATES.md. No debug-signed release will be published.')
+          key = Path(os.environ['RUNNER_TEMP']) / 'installer-signing.jks'
+          key.write_bytes(base64.b64decode(''.join(os.environ['ANDROID_KEYSTORE_BASE64'].split()), validate=True))
+          key.chmod(0o600)
+          PY
+
+      - name: Build signed APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/installer-signing.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          BUILD_CODE: ${{ steps.metadata.outputs.version_code }}
+        run: flutter build apk --release --build-number "$BUILD_CODE"
+
+      - name: Retrieve previous release certificate
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          response = subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/releases/latest"], capture_output=True, text=True)
+          if response.returncode:
+              if 'HTTP 404' not in response.stderr:
+                  raise SystemExit('Could not retrieve the previous release: ' + response.stderr)
+          else:
+              release = json.loads(response.stdout)
+              previous_code = re.fullmatch(r'v\d+\.\d+\.\d+-(\d+)', release['tag_name'])
+              if previous_code and int(previous_code.group(1)) > 1000 + int(os.environ['GITHUB_RUN_NUMBER']):
+                  raise SystemExit('A newer release already exists. Start a new workflow run instead of rerunning an old one.')
+              certificate = next((a for a in release['assets'] if a['name'] == 'signing-certificate.txt'), None)
+              if certificate:
+                  previous = Path(os.environ['RUNNER_TEMP']) / 'previous-signing-certificate.txt'
+                  with previous.open('wb') as output:
+                      subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream', f"repos/{os.environ['GH_REPO']}/releases/assets/{certificate['id']}"], stdout=output, check=True)
+          PY
+
+      - name: Verify signature and package release
+        run: |
+          previous_args=()
+          if [ -f "$RUNNER_TEMP/previous-signing-certificate.txt" ]; then
+            previous_args=(--previous-certificate "$RUNNER_TEMP/previous-signing-certificate.txt")
+          fi
+          python tools/prepare_release.py package --run-number "$GITHUB_RUN_NUMBER" --apk build/app/outputs/flutter-apk/app-release.apk --output release "${previous_args[@]}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: installer-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: release/*
           retention-days: 90
 
-      - name: Create Release
+      - name: Publish release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
-          body: "APK compilé automatiquement"
-          files: build/app/outputs/flutter-apk/app-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: Installer ${{ steps.metadata.outputs.version }} (build ${{ steps.metadata.outputs.version_code }})
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.apk
+            release/update.json
+            release/signing-certificate.txt
+            release/SHA256SUMS
+
+      - name: Remove private signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/installer-signing.jks"

@@ -196,6 +196,30 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "getAppVersion" -> {
+                    @Suppress("DEPRECATION")
+                    val info = packageManager.getPackageInfo(packageName, 0)
+                    val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+                    result.success(mapOf("versionName" to (info.versionName ?: ""), "versionCode" to code))
+                }
+                "openUpdateDownload" -> {
+                    val uri = call.argument<String>("url")?.let { Uri.parse(it) }
+                    val path = uri?.path ?: ""
+                    if (uri == null || uri.scheme != "https" || uri.host != "github.com" ||
+                        (uri.port != -1 && uri.port != 443) || !uri.userInfo.isNullOrEmpty() ||
+                        uri.query != null || uri.fragment != null ||
+                        !path.startsWith("/chuppito/installer/releases/download/") ||
+                        !path.endsWith(".apk") || uri.pathSegments.contains("..")) {
+                        result.error("INVALID_UPDATE_URL", "Lien de mise à jour invalide", null)
+                    } else {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("UPDATE_DOWNLOAD_ERROR", "Impossible d’ouvrir le téléchargement : ${e.message}", null)
+                        }
+                    }
+                }
                 "installApk" -> doInstall(call.argument("path"), result)
                 "installApkShizuku" -> {
                     val path = call.argument<String>("path")
