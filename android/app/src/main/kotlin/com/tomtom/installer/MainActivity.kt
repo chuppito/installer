@@ -324,34 +324,93 @@ class MainActivity : FlutterActivity() {
             result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
             return
         }
+        val file = File(path)
+        if (!file.isFile || file.length() <= 0L) {
+            result.error("INVALID_APK", "APK introuvable ou vide", null)
+            return
+        }
+        val targetPackage = getPackageNameFromApk(path)
+        if (targetPackage == null) {
+            result.error("INVALID_APK", "Cet APK ne peut pas être lu par Android", null)
+            return
+        }
         privilegedInstallRunning = true
-        watchedPackage = getPackageNameFromApk(path)
+        watchedPackage = targetPackage
         Thread {
             try {
-                val apk = File(path)
-                val runner = PrivilegedApkInstaller { command ->
-                    if (tag == "ROOT") {
-                        ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-                    } else {
-                        Shizuku.newProcess(arrayOf("/system/bin/sh", "-c", command), null, null)
+                val fileUri = uri(file)
+                grantInstallerAccess(fileUri)
+                log(tag, "Ouverture du programme d’installation Android pour $targetPackage")
+                if (tag == "SHIZUKU") {
+                    val intent = buildKingIntent(fileUri).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        // Keep the native completion dialog with OK / Open.
+                        removeExtra(Intent.EXTRA_RETURN_RESULT)
+                        putExtra("android.content.pm.extra.INSTALL_REASON", 1)
                     }
+                    val code = NativeInstallerLauncher.launchWithShizuku(intent)
+                    log(tag, "startActivityAsUser via Shizuku -> code=$code")
+                } else {
+                    launchNativeInstallerRoot(fileUri)
                 }
-                runner.install(apk, android.os.Process.myUid() / 100000) { log(tag, it) }
-                watchedPackage?.let { logInstallSource(it, "${tag}_INSTALL") }
                 runOnUiThread {
                     privilegedInstallRunning = false
-                    // Flutter install methods expect a string, not an InstallSourceInfo map.
-                    result.success("install_success")
+                    // Opening the installer is not confirmation of installation.
+                    result.success("native_installer_opened")
                 }
             } catch (e: Exception) {
-                log(tag, "ERREUR: ${e.message}")
+                val message = e.cause?.message ?: e.message ?: "Ouverture impossible"
+                log(tag, "ERREUR: $message")
                 runOnUiThread {
                     privilegedInstallRunning = false
-                    result.error("${tag}_ERROR", e.message ?: "Installation échouée", null)
+                    result.error("${tag}_ERROR", message, null)
                 }
             }
         }.start()
     }
+
+    private fun grantInstallerAccess(fileUri: Uri) {
+        val packages = mutableSetOf(
+            "com.android.shell", "com.google.android.packageinstaller", "com.android.packageinstaller"
+        )
+        @Suppress("DEPRECATION")
+        val handlers = packageManager.queryIntentActivities(buildKingIntent(fileUri), PackageManager.MATCH_DEFAULT_ONLY)
+        handlers.forEach { packages.add(it.activityInfo.packageName) }
+        packages.forEach { target ->
+            try {
+                grantUriPermission(target, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                log("URI", "Lecture de l’APK autorisée pour $target")
+            } catch (e: Exception) {
+                if (target == "com.android.shell") throw e
+                log("URI", "$target: ${e.message}")
+            }
+        }
+    }
+
+    private fun launchNativeInstallerRoot(fileUri: Uri) {
+        val command = "am start --user ${android.os.Process.myUid() / 100000} " +
+            "-a android.intent.action.INSTALL_PACKAGE " +
+            "-d ${shellQuote(fileUri.toString())} -t application/vnd.android.package-archive " +
+            "-f 0x10000001 " +
+            "--es android.intent.extra.INSTALLER_PACKAGE_NAME $VENDING " +
+            "--es android.intent.extra.REFERRER_NAME android-app://$VENDING " +
+            "--ei android.intent.extra.INSTALL_REASON 1 " +
+            "--ez android.intent.extra.NOT_UNKNOWN_SOURCE true"
+        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+        try {
+            process.outputStream.close()
+            val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+            val code = process.waitFor()
+            log("ROOT", "am start -> exit=$code $output")
+            if (code != 0 || output.lineSequence().any { it.trimStart().startsWith("Error:") }) {
+                throw IOException("Programme d’installation non ouvert: exit=$code\n$output")
+            }
+        } finally {
+            process.destroy()
+        }
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private fun isRooted(): Boolean {
         val su = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su", "/data/adb/ksu/bin/su", "/data/adb/magisk/su")

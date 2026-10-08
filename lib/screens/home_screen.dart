@@ -13,7 +13,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   String? _path, _name;
   int? _size;
   bool _split = false, _rooted = false, _colorOS = false, _hyperOS = false, _shizuku = false;
@@ -26,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _anim = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
     _fade = CurvedAnimation(parent: _anim, curve: Curves.easeInOut);
     _init();
@@ -42,7 +43,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   @override
-  void dispose() { _anim.dispose(); super.dispose(); }
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _init();
+  }
 
   Future<void> _pick() async {
     _set(InstallStatus.requestingPermission, 'Vérification des permissions…');
@@ -84,7 +94,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
       switch (code) {
         case 'install_success': _set(InstallStatus.success, 'Installation réussie ✓');
-        case 'install_started': _set(InstallStatus.success, 'Installation lancée ✓');
+        case 'native_installer_opened':
+          _set(InstallStatus.idle, 'Programme d’installation Android ouvert. Confirme dans sa fenêtre.');
+        case 'install_started':
+          _set(InstallStatus.idle, 'Installation lancée. Termine dans la fenêtre Android.');
         case 'install_cancelled': _set(InstallStatus.error, 'Annulée.');
         case 'install_failed': _set(InstallStatus.error, 'Échec. Vérifie la signature APK.');
         default: _set(InstallStatus.error, 'Résultat non confirmé ($code). Consulte le journal.');
@@ -117,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _shizukuDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
     title: const Text('Shizuku — Mode universel'),
     content: const SingleChildScrollView(child: Text(
-      'Shizuku transmet l’APK à une session d’installation Android sans root.\n\n'
+      'Shizuku ouvre le programme d’installation Android : confirme l’installation ou la mise à jour, puis utilise « Ouvrir » si proposé.\n\n'
       'L’attribution Play Store est demandée puis vérifiée dans le journal. '
       'Son acceptation dépend du système.\n\n'
       'Comment l\'activer :\n'
@@ -157,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           Container(width: 36, height: 36, decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(8)),
             child: const Icon(Icons.system_update_alt_rounded, color: Colors.white, size: 20)),
           const SizedBox(width: 10),
-          const Text('Installer', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+          const Text('Installer 1.1.2', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
         ]),
         actions: [
           IconButton(onPressed: _logDialog, icon: const Icon(Icons.bug_report_outlined), tooltip: 'Log'),
@@ -228,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 12),
               _div(cs),
               const SizedBox(height: 12),
-              _altBtn('Shizuku', 'Installation directe et vérification dans le journal', Icons.vpn_key_rounded, Colors.teal,
+              _altBtn('Shizuku', 'Ouvre le programme d’installation Android', Icons.vpn_key_rounded, Colors.teal,
                 busy ? null : () => _install(InstallMethod.shizuku),
                 info: _shizukuDialog),
               const SizedBox(height: 10),
@@ -236,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 10),
               _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange, busy ? null : () => _install(InstallMethod.hyperOS)),
               const SizedBox(height: 10),
-              _altBtn('Root', 'Session d’installation et vérification dans le journal', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
+              _altBtn('Root', 'Ouvre le programme d’installation Android', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
                 busy ? null : () {
                   if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'), actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))]));
                   else _install(InstallMethod.oppoRoot);

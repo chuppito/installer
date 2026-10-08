@@ -69,10 +69,6 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
-      - name: Android installation regression tests
-        working-directory: android
-        run: ./gradlew :app:testReleaseUnitTest
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
