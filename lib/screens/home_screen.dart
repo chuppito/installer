@@ -37,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final h = await ApkInstallerService.isHyperOS();
     final s = await ApkInstallerService.isShizukuAvailable();
     final l = await ApkInstallerService.getLogPath();
+    if (!mounted) return;
     setState(() { _rooted = r; _colorOS = c; _hyperOS = h; _shizuku = s; _logPath = l; });
   }
 
@@ -86,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         case 'install_started': _set(InstallStatus.success, 'Installation lancée ✓');
         case 'install_cancelled': _set(InstallStatus.error, 'Annulée.');
         case 'install_failed': _set(InstallStatus.error, 'Échec. Vérifie la signature APK.');
-        default: _set(InstallStatus.success, 'Lancée ($code)');
+        default: _set(InstallStatus.error, 'Résultat non confirmé ($code). Consulte le journal.');
       }
     } catch (e) {
       final msg = e.toString();
@@ -100,7 +101,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  void _set(InstallStatus s, String m) => setState(() { _status = s; _msg = m; });
+  void _set(InstallStatus s, String m) {
+    if (!mounted) return;
+    setState(() { _status = s; _msg = m; });
+  }
   void _reset() { setState(() { _path = _name = null; _size = null; _split = false; _status = InstallStatus.idle; _msg = ''; }); _anim.reverse(); }
   String _fmt(int b) => b < 1048576 ? '${(b / 1024).toStringAsFixed(1)} Ko' : '${(b / 1048576).toStringAsFixed(1)} Mo';
 
@@ -113,11 +117,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _shizukuDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
     title: const Text('Shizuku — Mode universel'),
     content: const SingleChildScrollView(child: Text(
-      'Shizuku permet d\'installer des APK avec com.android.vending sans root.\n\n'
-      'Testé et confirmé sur :\n'
-      '• Honor • Nothing Phone\n'
-      '• Pixel • Redmagic\n'
-      '• Et la plupart des appareils\n\n'
+      'Shizuku transmet l’APK à une session d’installation Android sans root.\n\n'
+      'L’attribution Play Store est demandée puis vérifiée dans le journal. '
+      'Son acceptation dépend du système.\n\n'
       'Comment l\'activer :\n'
       '1. Installe "Shizuku" depuis le Play Store\n'
       '2. Active le débogage sans fil dans les options développeur\n'
@@ -159,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ]),
         actions: [
           IconButton(onPressed: _logDialog, icon: const Icon(Icons.bug_report_outlined), tooltip: 'Log'),
-          if (_path != null) IconButton(onPressed: _reset, icon: const Icon(Icons.close_rounded)),
+          if (_path != null) IconButton(onPressed: _status == InstallStatus.installing ? null : _reset, icon: const Icon(Icons.close_rounded)),
           const SizedBox(width: 4),
         ],
       ),
@@ -172,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             child: const Row(children: [
               Icon(Icons.store_rounded, color: Color(0xFF1A73E8), size: 18),
               SizedBox(width: 10),
-              Expanded(child: Text('Installation via com.android.vending', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1A73E8)))),
+              Expanded(child: Text('Attribution Play Store demandée', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1A73E8)))),
               Icon(Icons.verified_rounded, color: Color(0xFF1A73E8), size: 16),
             ])),
 
@@ -226,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 12),
               _div(cs),
               const SizedBox(height: 12),
-              _altBtn('Shizuku + correction Play Store', 'Package Installer puis set-installer → Play Store', Icons.vpn_key_rounded, Colors.teal,
+              _altBtn('Shizuku', 'Installation directe et vérification dans le journal', Icons.vpn_key_rounded, Colors.teal,
                 busy ? null : () => _install(InstallMethod.shizuku),
                 info: _shizukuDialog),
               const SizedBox(height: 10),
@@ -234,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 10),
               _altBtn('Xiaomi / Redmi / Poco (HyperOS)', 'Contourne le Security Center', Icons.shield_outlined, Colors.deepOrange, busy ? null : () => _install(InstallMethod.hyperOS)),
               const SizedBox(height: 10),
-              _altBtn('Root', 'pm install -i puis set-installer → Play Store', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
+              _altBtn('Root', 'Session d’installation et vérification dans le journal', Icons.security_rounded, _rooted ? Colors.green : Colors.grey,
                 busy ? null : () {
                   if (!_rooted) showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Root non détecté'), content: const Text('Cette méthode nécessite root.'), actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))]));
                   else _install(InstallMethod.oppoRoot);
@@ -285,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget _compat(ColorScheme cs) {
     const items = [('Pixel', Icons.smartphone_rounded), ('Samsung', Icons.phone_android_rounded), ('OnePlus', Icons.devices_rounded), ('Oppo', Icons.phone_iphone_rounded), ('Realme', Icons.phone_rounded), ('Xiaomi', Icons.phone_android_rounded), ('LineageOS', Icons.settings_applications_rounded), ('Honor', Icons.phone_rounded), ('Nothing', Icons.phone_android_rounded), ('Redmagic', Icons.videogame_asset_rounded)];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Compatible avec', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withOpacity(0.5))),
+      Text('Méthodes selon le fabricant', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withOpacity(0.5))),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 8, children: items.map((b) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

@@ -6,16 +6,13 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
-import java.io.DataOutputStream
 import java.io.File
 import java.io.FileWriter
 import java.io.IOException
@@ -36,6 +33,8 @@ class MainActivity : FlutterActivity() {
     private val VENDING = "com.android.vending"
     private val VERIFY_DELAY_MS = 900L
 
+    private var watchedPackage: String? = null
+    private var privilegedInstallRunning = false
     private var pendingResult: MethodChannel.Result? = null
     private var pendingShizukuResult: MethodChannel.Result? = null
     private var pendingShizukuPath: String? = null
@@ -58,11 +57,11 @@ class MainActivity : FlutterActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_PACKAGE_ADDED && intent.action != Intent.ACTION_PACKAGE_REPLACED) return
             val packageName = intent.data?.schemeSpecificPart ?: return
-            if (packageName == this@MainActivity.packageName) return
+            if (packageName != watchedPackage) return
 
             log("VERIFY", "Événement installation: $packageName")
             handler.postDelayed({
-                verifyAndCorrectAttribution(packageName, "POST_INSTALL")
+                verifyAttribution(packageName, "POST_INSTALL")
             }, VERIFY_DELAY_MS)
         }
     }
@@ -83,7 +82,7 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return try {
             val info = packageManager.getInstallSourceInfo(packageName)
-            val source = info.packageSource
+            val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) info.packageSource else null
             mapOf(
                 "packageName" to packageName,
                 "installingPackageName" to info.installingPackageName,
@@ -110,35 +109,15 @@ class MainActivity : FlutterActivity() {
         return info
     }
 
-    /**
-     * Root can always use the package-manager command directly. If the OEM
-     * ignored the installer hint, we correct the installer-of-record and
-     * immediately verify again.
-     */
-    private fun verifyAndCorrectAttribution(packageName: String, tag: String, callback: ((Map<String, Any?>?) -> Unit)? = null) {
+    // Verification is read-only: missing metadata is not evidence of a wrong
+    // installer. Android can reject set-installer even for UID 0.
+    private fun verifyAttribution(packageName: String, tag: String, callback: ((Map<String, Any?>?) -> Unit)? = null) {
         Thread {
-            try {
-                var info = logInstallSource(packageName, tag)
-                if (info?.get("installingPackageName") != VENDING && isRooted()) {
-                    log("VERIFY", "Installer != Play Store -> correction root pour $packageName")
-                    val output = runRootCommand("cmd package set-installer $packageName $VENDING")
-                    log("ROOT", "set-installer output=$output")
-                    Thread.sleep(250)
-                    info = logInstallSource(packageName, "VERIFY_AFTER_ROOT_FIX")
-                }
-                runOnUiThread { callback?.invoke(info) }
-            } catch (e: Exception) {
-                log("VERIFY", "Erreur correction $packageName: ${e.message}")
-                runOnUiThread { callback?.invoke(null) }
-            }
+            val info = logInstallSource(packageName, tag)
+            runOnUiThread { callback?.invoke(info) }
         }.start()
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Shizuku: public newProcess API from Shizuku 12.2.0.
-    // We deliberately keep this path simple: execute pm directly and return
-    // the real shell output instead of binding a custom UserService.
-    // ─────────────────────────────────────────────────────────────────────────
     private fun isShizukuAvailable(): Boolean = try { Shizuku.pingBinder() } catch (_: Exception) { false }
 
     private fun isShizukuGranted(): Boolean = try {
@@ -158,14 +137,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun shizukuExec(command: String): String {
-        val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-        val stdout = process.inputStream.bufferedReader().readText()
-        val stderr = process.errorStream.bufferedReader().readText()
-        val code = process.waitFor()
-        return "exit=$code\n" + (stdout.ifEmpty { stderr }).trim()
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         splitInstaller = SplitApkInstaller(this)
@@ -176,7 +147,11 @@ class MainActivity : FlutterActivity() {
             addAction(Intent.ACTION_PACKAGE_REPLACED)
             addDataScheme("package")
         }
-        registerReceiver(packageAddedReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageAddedReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(packageAddedReceiver, filter)
+        }
 
     }
 
@@ -211,40 +186,33 @@ class MainActivity : FlutterActivity() {
                     val path = call.argument<String>("path")
                     if (path == null) {
                         result.error("INVALID_PATH", "null", null)
+                    } else if (installationBusy()) {
+                        result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
                     } else if (!isShizukuAvailable()) {
                         result.error("SHIZUKU_UNAVAILABLE", "Shizuku non disponible", null)
                     } else if (!isShizukuGranted()) {
                         pendingShizukuPath = path
                         pendingShizukuResult = result
                         try { Shizuku.requestPermission(SHIZUKU_CODE) }
-                        catch (e: Exception) { result.error("SHIZUKU_ERROR", e.message, null) }
+                        catch (e: Exception) {
+                            pendingShizukuPath = null
+                            pendingShizukuResult = null
+                            result.error("SHIZUKU_ERROR", e.message, null)
+                        }
                     } else {
                         doInstallShizuku(path, result)
                     }
                 }
                 "installApkRoot" -> {
                     val path = call.argument<String>("path")
-                    if (path == null) {
-                        result.error("INVALID_PATH", "null", null)
-                    } else {
-                        try {
-                            log("ROOT", "Début: $path")
-                            installRoot(path)
-                            val pkg = getPackageNameFromApk(path)
-                            if (pkg != null) {
-                                verifyAndCorrectAttribution(pkg, "ROOT_INSTALL") { info ->
-                                    result.success(info ?: "install_success")
-                                }
-                            } else result.success("install_success")
-                        } catch (e: Exception) {
-                            log("ROOT", "ERREUR: ${e.message}")
-                            result.error("ROOT_ERROR", e.message, null)
-                        }
-                    }
+                    if (path == null) result.error("INVALID_PATH", "null", null)
+                    else doInstallPrivileged(path, result, "ROOT")
                 }
                 "installSplitApk" -> {
                     val path = call.argument<String>("path")
-                    if (path != null) {
+                    if (installationBusy()) {
+                        result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
+                    } else if (path != null) {
                         log("SPLIT", "Début: $path")
                         splitInstaller.install(path, object : SplitApkInstaller.InstallCallback {
                             override fun onSuccess() { log("SPLIT", "OK"); result.success("install_started") }
@@ -263,7 +231,7 @@ class MainActivity : FlutterActivity() {
                 "verifyInstallSource" -> {
                     val pkg = call.argument<String>("packageName")
                     if (pkg == null) result.error("INVALID_PACKAGE", "packageName null", null)
-                    else verifyAndCorrectAttribution(pkg, "MANUAL_VERIFY") { result.success(it) }
+                    else verifyAttribution(pkg, "MANUAL_VERIFY") { result.success(it) }
                 }
                 "isRooted" -> result.success(isRooted())
                 "isColorOS" -> result.success(isColorOS())
@@ -278,8 +246,15 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun doInstall(path: String?, result: MethodChannel.Result, tag: String, action: (String) -> Unit) {
+        if (installationBusy()) {
+            result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
+            return
+        }
         if (path != null) {
-            try { log(tag, "Début:$path"); pendingResult = result; action(path) }
+            try {
+                watchedPackage = getPackageNameFromApk(path)
+                log(tag, "Début:$path"); pendingResult = result; action(path)
+            }
             catch (e: Exception) { log(tag, "ERREUR:${e.message}"); pendingResult = null; result.error("INSTALL_ERROR", e.message, null) }
         } else result.error("INVALID_PATH", "null", null)
     }
@@ -290,11 +265,13 @@ class MainActivity : FlutterActivity() {
     // possible to the proven KingInstaller flow.
     private fun buildKingIntent(apkUri: Uri): Intent {
         return Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-            data = apkUri
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
             putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             putExtra(Intent.EXTRA_RETURN_RESULT, true)
             putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, VENDING)
+            putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://$VENDING"))
+            putExtra("android.intent.extra.REFERRER_NAME", "android-app://$VENDING")
         }
     }
 
@@ -335,100 +312,49 @@ class MainActivity : FlutterActivity() {
         }, REQUEST_INSTALL)
     }
 
-    // Shizuku installs directly through pm. This avoids the crashing custom
-    // UserService and gives us the shell's real exit code/output.
+    private fun installationBusy(): Boolean = privilegedInstallRunning ||
+        pendingResult != null || pendingShizukuResult != null
+
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
+        doInstallPrivileged(path, result, "SHIZUKU")
+    }
+
+    private fun doInstallPrivileged(path: String, result: MethodChannel.Result, tag: String) {
+        if (installationBusy()) {
+            result.error("INSTALL_BUSY", "Une installation est déjà en cours", null)
+            return
+        }
+        privilegedInstallRunning = true
+        watchedPackage = getPackageNameFromApk(path)
         Thread {
             try {
-                val f = File(path)
-                if (!f.exists()) throw IOException("Introuvable:$path")
-                log("SHIZUKU", "Installation directe: $path")
-                val output = shizukuExec("pm install -t -i $VENDING -r ${shellQuote(path)}")
-                log("SHIZUKU", "pm install -> $output")
-                if (!output.contains("Success", ignoreCase = true)) {
-                    throw IOException(output)
-                }
-                val pkg = getPackageNameFromApk(path)
-                if (pkg != null) {
-                    verifyAndCorrectAttribution(pkg, "SHIZUKU_INSTALL") { info ->
-                        result.success(info ?: "install_success")
+                val apk = File(path)
+                val runner = PrivilegedApkInstaller { command ->
+                    if (tag == "ROOT") {
+                        ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+                    } else {
+                        Shizuku.newProcess(arrayOf("/system/bin/sh", "-c", command), null, null)
                     }
-                } else {
+                }
+                runner.install(apk, android.os.Process.myUid() / 100000) { log(tag, it) }
+                watchedPackage?.let { logInstallSource(it, "${tag}_INSTALL") }
+                runOnUiThread {
+                    privilegedInstallRunning = false
+                    // Flutter install methods expect a string, not an InstallSourceInfo map.
                     result.success("install_success")
                 }
             } catch (e: Exception) {
-                log("SHIZUKU", "ERREUR: ${e.message}")
-                runOnUiThread { result.error("SHIZUKU_ERROR", e.message ?: "Erreur Shizuku", null) }
+                log(tag, "ERREUR: ${e.message}")
+                runOnUiThread {
+                    privilegedInstallRunning = false
+                    result.error("${tag}_ERROR", e.message ?: "Installation échouée", null)
+                }
             }
         }.start()
     }
 
-    private fun runRootCommand(command: String): String {
-        val p = Runtime.getRuntime().exec("su")
-        DataOutputStream(p.outputStream).use { os ->
-            os.writeBytes(command + "\n")
-            os.writeBytes("exit\n")
-            os.flush()
-        }
-        val stdout = p.inputStream.bufferedReader().readText()
-        val stderr = p.errorStream.bufferedReader().readText()
-        val code = p.waitFor()
-        p.destroy()
-        if (code != 0) throw Exception("exit=$code ${stderr.ifEmpty { stdout }}")
-        return stdout.ifEmpty { stderr }.trim()
-    }
-
-    /**
-     * Root installation through an explicit PackageInstaller session.
-     * This is intentionally different from the old one-line `pm install`:
-     * root creates the session, writes the APK into that session, then commits
-     * it. The installer-of-record is explicitly set to Google Play Store.
-     *
-     * Important: Android keeps installer-of-record and initiating package as
-     * separate pieces of InstallSourceInfo, so this does not promise that the
-     * initiator will become com.android.vending. The post-install diagnostic
-     * records both values so we can compare this path with KingInstaller and
-     * Shizuku on the real device.
-     */
-    private fun installRoot(path: String) {
-        val f = File(path)
-        if (!f.exists()) throw IOException("Introuvable:$path")
-
-        val size = f.length()
-        if (size <= 0L) throw IOException("APK vide:$path")
-
-        log("ROOT", "PackageInstaller session root: $path ($size octets)")
-
-        // Create an explicit PackageInstaller session.
-        val create = runRootCommand(
-            "cmd package install-create -r -t -i $VENDING -S $size"
-        )
-        log("ROOT", "install-create -> $create")
-
-        val sessionId = Regex("[0-9]+")
-            .find(create)
-            ?.value
-            ?: throw IOException("Impossible de récupérer l'ID de session: $create")
-
-        // Feed the APK to PackageInstaller. `-S` is required by the shell
-        // command and makes the operation explicit rather than using pm install.
-        val write = runRootCommand(
-            "cmd package install-write -S $size $sessionId base.apk ${shellQuote(path)}"
-        )
-        log("ROOT", "install-write session=$sessionId -> $write")
-
-        val commit = runRootCommand("cmd package install-commit $sessionId")
-        log("ROOT", "install-commit session=$sessionId -> $commit")
-
-        if (!commit.contains("Success", ignoreCase = true)) {
-            throw IOException("Installation root échouée: $commit")
-        }
-    }
-
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
     private fun isRooted(): Boolean {
-        val su = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su")
+        val su = arrayOf("/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/bin/su", "/data/adb/ksu/bin/su", "/data/adb/magisk/su")
         return su.any { File(it).exists() } || try {
             Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su")).inputStream.bufferedReader().readLine() != null
         } catch (_: Exception) { false }
