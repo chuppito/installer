@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from tools.prepare_release import metadata, package_release, certificate_from_output, signed_certificate
+from tools.prepare_release import metadata, package_release, signed_certificate
 
 
 class ReleaseTests(unittest.TestCase):
@@ -42,45 +42,39 @@ class ReleaseTests(unittest.TestCase):
 
 
 class CertificateTests(unittest.TestCase):
-    def test_numbered_signer_and_public_key_or_source_stamp_are_distinguished(self):
-        output = (
-            'Signer #1 certificate SHA-256 digest: ' + 'A' * 64 + '\n'
-            'Signer #1 public key SHA-256 digest: ' + 'b' * 64 + '\n'
-            'Source Stamp Signer certificate SHA-256 digest: ' + 'c' * 64 + '\n'
-        )
-        self.assertEqual(certificate_from_output(output), 'a' * 64)
-
-    def test_same_certificate_across_sdk_ranges_is_accepted(self):
-        output = (
-            'Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ' + 'a' * 64 + '\n'
-            'Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ' + 'a' * 64 + '\n'
-        )
-        self.assertEqual(certificate_from_output(output), 'a' * 64)
-
-    def test_development_sdk_range_and_crlf_are_supported(self):
-        output = 'Signer (minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647) certificate SHA-256 digest: ' + 'A' * 64 + '\r\n'
-        self.assertEqual(certificate_from_output(output), 'a' * 64)
-
-    def test_missing_or_different_certificates_are_rejected(self):
-        for output in [
-            '',
-            'Source Stamp Signer certificate SHA-256 digest: ' + 'a' * 64,
-            'Signer #1 certificate SHA-256 digest: short',
-            'Signer #1 certificate SHA-256 digest: ' + 'a' * 64 + '\nSigner #2 certificate SHA-256 digest: ' + 'b' * 64,
-            'Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ' + 'a' * 64 + '\nSigner (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ' + 'b' * 64,
-        ]:
-            with self.subTest(output=output):
-                with self.assertRaises(ValueError):
-                    certificate_from_output(output)
-
-    def test_failed_apksigner_verification_is_not_bypassed(self):
+    def test_verified_certificate_is_used_and_latest_sdk_library_selected(self):
         with tempfile.TemporaryDirectory() as directory:
             sdk = Path(directory)
-            signer = sdk / 'build-tools/36.0.0/apksigner'
-            signer.parent.mkdir(parents=True)
-            signer.touch()
+            for version in ('9.0.0', '36.0.0'):
+                library = sdk / f'build-tools/{version}/lib/apksigner.jar'
+                library.parent.mkdir(parents=True)
+                library.touch()
             with patch.dict(os.environ, {'ANDROID_HOME': str(sdk)}):
-                with patch('tools.prepare_release.subprocess.check_output', side_effect=subprocess.CalledProcessError(1, 'apksigner')):
+                with patch('tools.prepare_release.subprocess.check_output', return_value='a' * 64 + '\n') as verify:
+                    self.assertEqual(signed_certificate(Path('signed.apk')), 'a' * 64)
+                    self.assertEqual(verify.call_args.args[0][2], str(library))
+
+    def test_invalid_verifier_output_blocks_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = Path(directory)
+            library = sdk / 'build-tools/36.0.0/lib/apksigner.jar'
+            library.parent.mkdir(parents=True)
+            library.touch()
+            with patch.dict(os.environ, {'ANDROID_HOME': str(sdk)}):
+                for output in ('', 'short', 'a' * 64 + '\n' + 'b' * 64):
+                    with self.subTest(output=output):
+                        with patch('tools.prepare_release.subprocess.check_output', return_value=output):
+                            with self.assertRaises(ValueError):
+                                signed_certificate(Path('invalid.apk'))
+
+    def test_failed_signature_verification_is_not_bypassed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = Path(directory)
+            library = sdk / 'build-tools/36.0.0/lib/apksigner.jar'
+            library.parent.mkdir(parents=True)
+            library.touch()
+            with patch.dict(os.environ, {'ANDROID_HOME': str(sdk)}):
+                with patch('tools.prepare_release.subprocess.check_output', side_effect=subprocess.CalledProcessError(1, 'java')):
                     with self.assertRaises(subprocess.CalledProcessError):
                         signed_certificate(Path('invalid.apk'))
 
