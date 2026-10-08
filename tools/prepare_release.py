@@ -28,17 +28,29 @@ def metadata(run_number, path=Path('pubspec.yaml')):
             'apk_name': f'Installer-{version}-{code}.apk'}
 
 
+def certificate_from_output(output):
+    # Build-tools may identify certificates by signer number or SDK range.
+    # The same certificate can be printed for several signature schemes.
+    matches = re.findall(
+        r'^Signer(?: #\d+)?(?: \(minSdkVersion=[^\r\n]+\))? certificate SHA-256 digest: ([0-9a-fA-F]{64})[ \t]*\r?$',
+        output, re.M,
+    )
+    certificates = {digest.lower() for digest in matches}
+    if len(certificates) != 1:
+        raise ValueError(
+            f'Expected one unique verified APK signing certificate, found {len(certificates)}'
+        )
+    return certificates.pop()
+
+
 def signed_certificate(apk):
     sdk = Path(os.environ.get('ANDROID_HOME') or os.environ['ANDROID_SDK_ROOT'])
     candidates = list((sdk / 'build-tools').glob('*/apksigner'))
     if not candidates:
         raise ValueError('apksigner is unavailable')
     signer = max(candidates, key=lambda p: tuple(int(n) for n in re.findall(r'\d+', p.parent.name)))
-    verified = subprocess.check_output([str(signer), 'verify', '--print-certs', str(apk)], text=True)
-    certificates = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})', verified)
-    if len(certificates) != 1:
-        raise ValueError('Expected one verified APK signing certificate')
-    return certificates[0].lower()
+    verified = subprocess.check_output([str(signer), 'verify', '--verbose', '--print-certs', str(apk)], text=True)
+    return certificate_from_output(verified)
 
 
 def package_release(apk, run_number, output, previous_certificate=None):
