@@ -58,13 +58,21 @@ Le nom de version vient de `pubspec.yaml`. Actualiser aussi `RELEASE_NOTES.md` l
 
 La release contient :
 
-- l’APK signé ;
+- `installer.apk` : l’APK signé, avec un nom identique à chaque release ;
 - `update.json` : version, code Android, URL APK, empreinte du fichier, empreinte publique du certificat et notes ;
 - `SHA256SUMS` ;
 - `signing-certificate.txt` : **empreinte publique uniquement**.
 
 À partir de la deuxième release, le workflow compare le certificat à celui de la dernière release et refuse la publication si la clé a changé.
 Le keystore temporaire est créé hors du dépôt sur le runner et supprimé en fin de compilation. Il n’est ni inclus dans l’APK, ni téléversé en artefact.
+
+## Lien permanent de téléchargement
+
+Pour un site ou un forum, utiliser :
+
+https://github.com/chuppito/installer/releases/latest/download/installer.apk
+
+Ce lien télécharge l’APK de la dernière release. Les tags et les codes de version continuent à distinguer les builds. Le dépôt doit être public pour un accès sans connexion GitHub.
 
 ## Dans l’application
 

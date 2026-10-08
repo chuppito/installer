@@ -25,7 +25,7 @@ def metadata(run_number, path=Path('pubspec.yaml')):
     if code > 2100000000:
         raise ValueError('Android version code limit exceeded')
     return {'version': version, 'version_code': code, 'tag': f'v{version}-{code}',
-            'apk_name': f'Installer-{version}-{code}.apk'}
+            'apk_name': 'installer.apk'}
 
 
 def signed_certificate(apk):
