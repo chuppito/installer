@@ -325,7 +325,15 @@ class MainActivity : FlutterActivity() {
         pendingShizukuResult != null
 
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
-        openWithShizuku(path, result)
+        if (File(path).extension.lowercase() in listOf("apkm", "apks", "xapk")) {
+            if (installationBusy()) { result.error("INSTALL_BUSY", "Une installation est déjà en cours", null); return }
+            privilegedInstallRunning = true
+            ShizukuSplitInstaller(this) { log("SHIZUKU_SPLIT", it) }.install(path) { status, error ->
+                privilegedInstallRunning = false
+                if (error != null) result.error("SHIZUKU_SPLIT_ERROR", error, null)
+                else result.success(status)
+            }
+        } else openWithShizuku(path, result)
     }
 
     private fun openWithShizuku(path: String, result: MethodChannel.Result) {

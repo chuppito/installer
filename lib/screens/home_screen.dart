@@ -125,7 +125,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     try {
       if (!await ApkInstallerService.canInstall()) await Permission.requestInstallPackages.request();
       String code;
-      if (_split) {
+      if (_split && method == InstallMethod.standard) {
         code = await ApkInstallerService.installSplitApk(_path!);
       } else {
         code = switch (method) {
@@ -172,7 +172,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     title: const Text('Shizuku — Mode universel'),
     content: const SingleChildScrollView(child: Text(
       'Shizuku ouvre le programme d’installation Android : confirme l’installation ou la mise à jour, puis utilise « Ouvrir » si proposé.\n\n'
-      'L’attribution Play Store est demandée puis vérifiée dans le journal. '
+      'Pour une archive split, confirme ici : Shizuku installe tous les composants dans une même session, puis propose « OK / Ouvrir ».\n\n'
+      'L’attribution Play Store est demandée. '
       'Son acceptation dépend du système.\n\n'
       'Comment l\'activer :\n'
       '1. Installe "Shizuku" depuis le Play Store\n'
@@ -280,8 +281,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           if (_path == null)
             _mainBtn('Choisir un fichier', Icons.folder_open_rounded, cs.primary, _pick, false)
           else Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (!_split) ...[
-              _mainBtn('Shizuku', Icons.vpn_key_rounded, Colors.teal,
+            ...[
+              _mainBtn(_split ? 'Shizuku (split)' : 'Shizuku', Icons.vpn_key_rounded, Colors.teal,
                 busy ? null : () => _install(InstallMethod.shizuku), busy),
               Align(alignment: Alignment.centerRight,
                 child: TextButton.icon(onPressed: _shizukuDialog,

@@ -19,7 +19,7 @@ class SplitApkInstaller(private val activity: Activity) {
         val file = File(archivePath)
         if (!file.exists()) { callback.onError("Fichier introuvable"); return }
         try {
-            val apks = extractApks(file)
+            val apks = extractApks(file, activity.cacheDir).apks
             when {
                 apks.isEmpty() -> callback.onError("Aucun APK trouvé")
                 apks.size == 1 -> callback.onError("SINGLE:" + apks[0].absolutePath)
@@ -28,19 +28,46 @@ class SplitApkInstaller(private val activity: Activity) {
         } catch (e: Exception) { callback.onError("Erreur: " + e.message) }
     }
 
-    private fun extractApks(archive: File): List<File> {
-        val dir = File(activity.cacheDir, "splits_" + System.currentTimeMillis()).also { it.mkdirs() }
-        val result = mutableListOf<File>()
-        ZipFile(archive).use { zip ->
-            zip.entries().asSequence()
-                .filter { !it.isDirectory && it.name.endsWith(".apk", true) && !it.name.contains("__MACOSX") }
-                .forEach { entry ->
-                    val out = File(dir, File(entry.name).name)
-                    zip.getInputStream(entry).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
-                    result.add(out)
+    class ExtractedApks(val directory: File, val apks: List<File>) : java.io.Closeable {
+        override fun close() { directory.deleteRecursively() }
+    }
+
+    companion object {
+        fun extractApks(archive: File, cache: File): ExtractedApks {
+            require(archive.isFile) { "Archive introuvable" }
+            val dir = File.createTempFile("splits_", "", cache).also {
+                check(it.delete() && it.mkdir()) { "Impossible de préparer les fichiers temporaires" }
+            }
+            try {
+                val result = mutableListOf<File>()
+                var total = 0L
+                ZipFile(archive).use { zip ->
+                    val entries = zip.entries().asSequence()
+                        .filter { !it.isDirectory && it.name.endsWith(".apk", true) && !it.name.contains("__MACOSX") }
+                        .take(257).toList()
+                    require(entries.isNotEmpty() && entries.size <= 256) { "L’archive doit contenir entre 1 et 256 APK" }
+                    entries.sortedWith(compareBy {
+                        val name = File(it.name).name
+                        if (name.equals("base.apk", true)) 0 else if (name.startsWith("base", true)) 1 else 2
+                    }).forEachIndexed { index, entry ->
+                        // Unique flat names prevent traversal and basename collisions.
+                        val out = File(dir, "component$index.apk")
+                        zip.getInputStream(entry).use { input -> out.outputStream().use { output ->
+                            val buffer = ByteArray(65536)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                total += read
+                                require(total <= 2L * 1024 * 1024 * 1024) { "Archive APK trop volumineuse" }
+                                output.write(buffer, 0, read)
+                            }
+                        } }
+                        require(out.length() > 0) { "Composant APK vide" }
+                        result.add(out)
+                    }
                 }
+                return ExtractedApks(dir, result)
+            } catch (e: Exception) { dir.deleteRecursively(); throw e }
         }
-        return result.sortedWith(compareBy { if (it.name == "base.apk") 0 else if (it.name.startsWith("base")) 1 else 2 })
     }
 
     private fun installSplits(apks: List<File>, callback: InstallCallback) {

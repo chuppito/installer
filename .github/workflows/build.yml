@@ -71,6 +71,10 @@ jobs:
           BUILD_CODE: ${{ steps.metadata.outputs.version_code }}
         run: flutter build apk --release --build-number "$BUILD_CODE"
 
+      - name: Android split session tests
+        working-directory: android
+        run: ./gradlew :app:testReleaseUnitTest
+
       - name: Retrieve previous release certificate
         if: github.ref == 'refs/heads/main'
         env:
