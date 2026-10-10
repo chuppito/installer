@@ -83,6 +83,7 @@ dependencies {
     implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:6.1'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
     implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'com.google.android.material:material:1.12.0'
     implementation 'dev.rikka.shizuku:api:12.2.0'
     implementation 'dev.rikka.shizuku:provider:12.2.0'
 }

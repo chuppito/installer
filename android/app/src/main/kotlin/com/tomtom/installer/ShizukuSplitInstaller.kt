@@ -1,7 +1,6 @@
 package com.tomtom.installer
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
@@ -32,7 +31,8 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
                     if (activity.isFinishing || activity.isDestroyed) {
                         bundle.close(); complete(null, "Installation interrompue"); return@runOnUiThread
                     }
-                    AlertDialog.Builder(activity)
+                    InstallerDialogs.builder(activity)
+                        .setIcon(try { info.applicationInfo?.loadIcon(activity.packageManager) } catch (_: Exception) { null })
                         .setTitle(if (updated) "Mettre à jour cette application ?" else "Installer cette application ?")
                         .setMessage(if (archive) "$name\n${bundle.apks.size} composant(s) APK — Shizuku" else "$name\nShizuku (root)")
                         .setNegativeButton("Annuler") { _, _ -> bundle.close(); complete("install_cancelled", null) }
@@ -77,9 +77,10 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
                     complete("install_success", null)
                     if (!activity.isFinishing && !activity.isDestroyed) {
                         val launch = activity.packageManager.getLaunchIntentForPackage(packageName)
-                        AlertDialog.Builder(activity).apply {
+                        InstallerDialogs.builder(activity).apply {
                             setTitle(if (updated) "Application mise à jour" else "Application installée")
                             setMessage(name)
+                            try { setIcon(activity.packageManager.getApplicationIcon(packageName)) } catch (_: Exception) {}
                             setNegativeButton("OK") { _, _ -> }
                             if (launch != null) setPositiveButton("Ouvrir") { _, _ -> activity.startActivity(launch) }
                         }.show()

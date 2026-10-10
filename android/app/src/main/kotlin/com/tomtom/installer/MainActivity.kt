@@ -1,6 +1,5 @@
 package com.tomtom.installer
 
-import android.app.AlertDialog
 import android.content.pm.PackageInstaller
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -172,16 +171,23 @@ class MainActivity : FlutterActivity() {
             val installedPackage = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME)
             installedPackage?.let { verifyAttribution(it, "SPLIT_INSTALL") }
             val launch = installedPackage?.let { packageManager.getLaunchIntentForPackage(it) }
-            AlertDialog.Builder(this).apply {
+            InstallerDialogs.builder(this).apply {
                 setTitle("Application installée")
-                setMessage("L’installation est terminée.")
+                val label = installedPackage?.let { target ->
+                    try { packageManager.getApplicationInfo(target, 0).loadLabel(packageManager).toString() }
+                    catch (_: Exception) { target }
+                }
+                setMessage(label ?: "L’installation est terminée.")
+                installedPackage?.let { target ->
+                    try { setIcon(packageManager.getApplicationIcon(target)) } catch (_: Exception) {}
+                }
                 setNegativeButton("OK") { _, _ -> }
                 if (launch != null) setPositiveButton("Ouvrir") { _, _ -> startActivity(launch) }
             }.show()
         } else {
             val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Installation échouée"
             log("SPLIT", "Échec: $message")
-            AlertDialog.Builder(this).setTitle("Installation interrompue")
+            InstallerDialogs.builder(this).setTitle("Installation interrompue")
                 .setMessage(message).setPositiveButton("OK") { _, _ -> }.show()
         }
     }
