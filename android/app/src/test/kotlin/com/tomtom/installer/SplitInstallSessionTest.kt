@@ -4,6 +4,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SplitInstallSessionTest {
+    @Test fun installsASingleApkAndNeverDeletesItsOriginalFile() {
+        val file = java.io.File.createTempFile("user_apk_", ".apk")
+        try {
+            file.writeBytes(byteArrayOf(1, 2, 3))
+            val prepared = SplitApkInstaller.singleApk(file)
+            val calls = mutableListOf<Pair<List<String>, Int?>>()
+            val install = SplitInstallSession { args, index ->
+                calls.add(args to index)
+                if (args[0] == "install-create") "Success: created install session [42]" else "Success"
+            }
+            assertEquals("Success", install.install(prepared.apks.map { it.length() }.toLongArray(), 0, true))
+            assertEquals(listOf("install-create", "install-write", "install-commit"), calls.map { it.first[0] })
+            assertEquals(0, calls[1].second)
+            prepared.close()
+            assertArrayEquals(byteArrayOf(1, 2, 3), file.readBytes())
+        } finally { file.delete() }
+    }
+
     @Test fun writesAllComponentsBeforeCommittingOneSession() {
         val calls = mutableListOf<Pair<List<String>, Int?>>()
         val install = SplitInstallSession { args, index ->

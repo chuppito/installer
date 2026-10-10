@@ -12,11 +12,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class ShizukuSplitInstaller(private val activity: Activity, private val log: (String) -> Unit) {
-    fun install(path: String, complete: (String?, String?) -> Unit) {
+    fun install(path: String, archive: Boolean = true, complete: (String?, String?) -> Unit) {
         Thread {
             var extracted: SplitApkInstaller.ExtractedApks? = null
             try {
-                val bundle = SplitApkInstaller.extractApks(java.io.File(path), activity.cacheDir)
+                val bundle = if (archive) SplitApkInstaller.extractApks(java.io.File(path), activity.cacheDir)
+                    else SplitApkInstaller.singleApk(java.io.File(path))
                 extracted = bundle
                 @Suppress("DEPRECATION")
                 val info = bundle.apks.mapNotNull { activity.packageManager.getPackageArchiveInfo(it.absolutePath, 0) }.firstOrNull()
@@ -33,7 +34,7 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
                     }
                     AlertDialog.Builder(activity)
                         .setTitle(if (updated) "Mettre à jour cette application ?" else "Installer cette application ?")
-                        .setMessage("$name\n${bundle.apks.size} composant(s) APK — Shizuku")
+                        .setMessage(if (archive) "$name\n${bundle.apks.size} composant(s) APK — Shizuku" else "$name\nShizuku (root)")
                         .setNegativeButton("Annuler") { _, _ -> bundle.close(); complete("install_cancelled", null) }
                         .setOnCancelListener { bundle.close(); complete("install_cancelled", null) }
                         .setPositiveButton(if (updated) "Mettre à jour" else "Installer") { _, _ ->
@@ -42,7 +43,7 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
                 }
             } catch (e: Exception) {
                 extracted?.close()
-                activity.runOnUiThread { complete(null, e.message ?: "Archive invalide") }
+                activity.runOnUiThread { complete(null, e.message ?: "Fichier APK invalide") }
             }
         }.start()
     }
@@ -60,7 +61,7 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
         val args = Shizuku.UserServiceArgs(ComponentName(activity, SplitShizukuService::class.java))
             .daemon(false).processNameSuffix("split_installer").version(version)
         try { Shizuku.bindUserService(args, connection) }
-        catch (e: Exception) { bundle.close(); complete(null, e.message); return }
+        catch (e: Exception) { bundle.close(); complete(null, e.message ?: "Impossible de démarrer le service Shizuku"); return }
         Thread {
             val descriptors = mutableListOf<ParcelFileDescriptor>()
             try {
@@ -72,6 +73,7 @@ class ShizukuSplitInstaller(private val activity: Activity, private val log: (St
                 log(output)
                 check(output == "Success") { output }
                 activity.runOnUiThread {
+                    log("Installation confirmée pour $packageName")
                     complete("install_success", null)
                     if (!activity.isFinishing && !activity.isDestroyed) {
                         val launch = activity.packageManager.getLaunchIntentForPackage(packageName)

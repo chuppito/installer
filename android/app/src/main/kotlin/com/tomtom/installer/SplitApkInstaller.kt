@@ -28,11 +28,17 @@ class SplitApkInstaller(private val activity: Activity) {
         } catch (e: Exception) { callback.onError("Erreur: " + e.message) }
     }
 
-    class ExtractedApks(val directory: File, val apks: List<File>) : java.io.Closeable {
-        override fun close() { directory.deleteRecursively() }
+    class ExtractedApks(val directory: File?, val apks: List<File>) : java.io.Closeable {
+        override fun close() { directory?.deleteRecursively() }
     }
 
     companion object {
+        fun singleApk(file: File): ExtractedApks {
+            require(file.isFile && file.length() > 0) { "APK introuvable ou vide" }
+            // The original APK belongs to the user; only extracted archives are deleted.
+            return ExtractedApks(null, listOf(file))
+        }
+
         fun extractApks(archive: File, cache: File): ExtractedApks {
             require(archive.isFile) { "Archive introuvable" }
             val dir = File.createTempFile("splits_", "", cache).also {

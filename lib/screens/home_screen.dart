@@ -171,7 +171,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _shizukuDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
     title: const Text('Shizuku — Mode universel'),
     content: const SingleChildScrollView(child: Text(
-      'Shizuku ouvre le programme d’installation Android : confirme l’installation ou la mise à jour, puis utilise « Ouvrir » si proposé.\n\n'
+      'Avec Shizuku démarré par ADB, confirme dans le programme d’installation Android. En mode root, confirme directement dans Installer, puis utilise « OK / Ouvrir » après réussite.\n\n'
       'Pour une archive split, confirme ici : Shizuku installe tous les composants dans une même session, puis propose « OK / Ouvrir ».\n\n'
       'L’attribution Play Store est demandée. '
       'Son acceptation dépend du système.\n\n'

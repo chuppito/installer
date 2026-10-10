@@ -325,13 +325,27 @@ class MainActivity : FlutterActivity() {
         pendingShizukuResult != null
 
     private fun doInstallShizuku(path: String, result: MethodChannel.Result) {
-        if (File(path).extension.lowercase() in listOf("apkm", "apks", "xapk")) {
-            if (installationBusy()) { result.error("INSTALL_BUSY", "Une installation est déjà en cours", null); return }
+        if (installationBusy()) { result.error("INSTALL_BUSY", "Une installation est déjà en cours", null); return }
+        val serverUid = try { Shizuku.getUid() } catch (e: Exception) {
+            result.error("SHIZUKU_ERROR", e.message ?: "Identité Shizuku indisponible", null)
+            return
+        }
+        val archive = File(path).extension.lowercase() in listOf("apkm", "apks", "xapk")
+        log("SHIZUKU", "Serveur uid=$serverUid, archive=$archive")
+        if (archive || serverUid == 0) {
+            // Root is not the shell identity used by Android's interactive APK installer.
+            // Use the session service with confirmation and a verified completion result.
             privilegedInstallRunning = true
-            ShizukuSplitInstaller(this) { log("SHIZUKU_SPLIT", it) }.install(path) { status, error ->
+            val tag = if (serverUid == 0) "SHIZUKU_ROOT" else "SHIZUKU_SPLIT"
+            ShizukuSplitInstaller(this) { log(tag, it) }.install(path, archive) { status, error ->
                 privilegedInstallRunning = false
-                if (error != null) result.error("SHIZUKU_SPLIT_ERROR", error, null)
-                else result.success(status)
+                if (error != null) { log(tag, "ERREUR: $error"); result.error("${tag}_ERROR", error, null) }
+                else {
+                    if (status == "install_success" && !archive) {
+                        getPackageNameFromApk(path)?.let { verifyAttribution(it, "SHIZUKU_ROOT_INSTALL") }
+                    }
+                    result.success(status)
+                }
             }
         } else openWithShizuku(path, result)
     }
