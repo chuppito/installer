@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <grp.h>
+#include <unistd.h>
 #include <cerrno>
 #include <cstring>
 #include <string>
