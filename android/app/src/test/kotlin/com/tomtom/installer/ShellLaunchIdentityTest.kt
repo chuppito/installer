@@ -37,4 +37,24 @@ class ShellLaunchIdentityTest {
         ShellLaunchIdentity.prepare(credentials)
         assertTrue(credentials.calls.isEmpty())
     }
+
+    @Test fun rejectsBinderThreadEvenWhenItsLocalUidIsShell() {
+        try {
+            ShellLaunchIdentity.verifyLeader("Uid:\t2000\t2000\t2000\t2000\n", 100, 101)
+            fail("Binder worker accepted as process leader")
+        } catch (_: IllegalStateException) {}
+    }
+    @Test fun rejectsRootLeaderAfterWorkerIdentityChanged() {
+        try {
+            ShellLaunchIdentity.verifyLeader("Uid:\t0\t0\t0\t0\n", 100, 100)
+            fail("Root leader accepted")
+        } catch (_: IllegalStateException) {}
+    }
+    @Test fun acceptsOnlyFullyVerifiedShellLeader() {
+        ShellLaunchIdentity.verifyLeader("Name:\tlauncher\nUid:\t2000\t2000\t2000\t2000\n", 100, 100)
+        for (status in listOf("", "Uid: 2000 2000", "Uid: 2000 0 2000 2000")) {
+            try { ShellLaunchIdentity.verifyLeader(status, 100, 100); fail("Invalid leader accepted") }
+            catch (_: IllegalStateException) {}
+        }
+    }
 }

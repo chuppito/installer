@@ -381,9 +381,9 @@ class MainActivity : FlutterActivity() {
                     putExtra("android.content.pm.extra.INSTALL_REASON", 1)
                 }
                 val code = if (serverUid == 0) {
-                    RootNativeInstallerLauncher.launch(this, intent)
+                    RootNativeInstallerLauncher.launch(this, intent) { log(tag, it) }
                 } else NativeInstallerLauncher.launchWithShizuku(intent)
-                log(tag, "startActivityAsUser -> code=$code, lanceur uid=2000, serveur uid=$serverUid")
+                log(tag, "startActivityAsUser -> code=$code, serveur uid=$serverUid")
                 runOnUiThread {
                     privilegedInstallRunning = false
                     // Opening the installer is not confirmation of installation.

@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 internal object RootNativeInstallerLauncher {
     /** Called from MainActivity's installation worker, never blocking the UI thread. */
-    fun launch(activity: Activity, intent: Intent): Int {
+    fun launch(activity: Activity, intent: Intent, log: (String) -> Unit): Int {
         val ready = CountDownLatch(1)
         val remote = AtomicReference<IBinder?>()
         val failure = AtomicReference<Exception?>()
@@ -39,7 +39,9 @@ internal object RootNativeInstallerLauncher {
             val service = remote.get() ?: error("Lanceur Shizuku déconnecté")
             val library = java.io.File(activity.applicationInfo.nativeLibraryDir, "libinstaller_launch.so")
             check(library.isFile) { "Bibliothèque native de lancement absente" }
-            return RootNativeInstallerService.launch(service, intent, Process.myUid() / 100000, library.absolutePath)
+            val result = RootNativeInstallerService.launch(service, intent, Process.myUid() / 100000, library.absolutePath)
+            log("Identité réelle du lanceur : ${result.identity}")
+            return result.code
         } finally {
             activity.runOnUiThread {
                 try { Shizuku.unbindUserService(args, connection, true) } catch (_: Exception) {}

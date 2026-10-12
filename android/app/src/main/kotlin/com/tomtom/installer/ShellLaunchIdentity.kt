@@ -1,6 +1,6 @@
 package com.tomtom.installer
 
-/** Clear inherited groups before permanently dropping privileges in the launcher process. */
+/** Clear inherited groups before changing the launcher main thread to Shell. */
 internal object ShellLaunchIdentity {
     interface Credentials {
         fun uid(): Int
@@ -19,5 +19,14 @@ internal object ShellLaunchIdentity {
             else -> error("Identité du processus de lancement non prise en charge")
         }
         check(credentials.uid() == 2000) { "Impossible d’appliquer l’identité Shell" }
+    }
+
+    fun verifyLeader(status: String, pid: Int, tid: Int) {
+        check(pid == tid) { "Le changement d’identité doit être effectué sur le thread principal" }
+        val ids = status.lineSequence().firstOrNull { it.startsWith("Uid:") }
+            ?.substringAfter(':')?.trim()?.split(Regex("\\s+"))?.mapNotNull { it.toIntOrNull() }
+        check(ids != null && ids.size == 4 && ids.all { it == 2000 }) {
+            "Le processus de lancement est encore root ou son identité est indéterminée"
+        }
     }
 }
