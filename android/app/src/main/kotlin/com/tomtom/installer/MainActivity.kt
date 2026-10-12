@@ -338,18 +338,14 @@ class MainActivity : FlutterActivity() {
         }
         val archive = File(path).extension.lowercase() in listOf("apkm", "apks", "xapk")
         log("SHIZUKU", "Serveur uid=$serverUid, archive=$archive")
-        if (archive || serverUid == 0) {
-            // Root is not the shell identity used by Android's interactive APK installer.
-            // Use the session service with confirmation and a verified completion result.
+        if (archive) {
+            // Split archives still need one package-manager session for all components.
             privilegedInstallRunning = true
             val tag = if (serverUid == 0) "SHIZUKU_ROOT" else "SHIZUKU_SPLIT"
             ShizukuSplitInstaller(this) { log(tag, it) }.install(path, archive) { status, error ->
                 privilegedInstallRunning = false
                 if (error != null) { log(tag, "ERREUR: $error"); result.error("${tag}_ERROR", error, null) }
                 else {
-                    if (status == "install_success" && !archive) {
-                        getPackageNameFromApk(path)?.let { verifyAttribution(it, "SHIZUKU_ROOT_INSTALL") }
-                    }
                     result.success(status)
                 }
             }
@@ -378,17 +374,21 @@ class MainActivity : FlutterActivity() {
             try {
                 val fileUri = uri(file)
                 grantInstallerAccess(fileUri)
-                log(tag, "Ouverture du programme d’installation Android pour $targetPackage")
+                val serverUid = Shizuku.getUid()
+                log(tag, "Ouverture native pour $targetPackage, serveur uid=$serverUid, accès URI accordé par Installer")
                 val intent = buildKingIntent(fileUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     putExtra("android.content.pm.extra.INSTALL_REASON", 1)
+                    // URI permissions were granted above using the app's identity.
+                    // Root is explicitly forbidden to propagate these flags by Android.
+                    flags = NativeInstallerLaunchPolicy.flags(serverUid, flags)
                 }
                 val code = NativeInstallerLauncher.launchWithShizuku(intent)
                 log(tag, "startActivityAsUser via Shizuku -> code=$code")
                 runOnUiThread {
                     privilegedInstallRunning = false
                     // Opening the installer is not confirmation of installation.
-                    result.success("native_installer_opened")
+                    result.success("native_installer_requested")
                 }
             } catch (e: Exception) {
                 val message = e.cause?.message ?: e.message ?: "Ouverture impossible"

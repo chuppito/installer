@@ -135,6 +135,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
       switch (code) {
         case 'install_success': _set(InstallStatus.success, 'Installation réussie ✓');
+        case 'native_installer_requested':
+          _set(InstallStatus.idle, 'Demande envoyée au programme d’installation Android. Confirme dans sa fenêtre.');
         case 'native_installer_opened':
           _set(InstallStatus.idle, 'Programme d’installation Android ouvert. Confirme dans sa fenêtre.');
         case 'install_started':
@@ -171,8 +173,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _shizukuDialog() => showDialog(context: context, builder: (ctx) => AlertDialog(
     title: const Text('Shizuku — Mode universel'),
     content: const SingleChildScrollView(child: Text(
-      'Avec Shizuku démarré par ADB, confirme dans le programme d’installation Android. En mode root, confirme directement dans Installer, puis utilise « OK / Ouvrir » après réussite.\n\n'
-      'Pour une archive split, confirme ici : Shizuku installe tous les composants dans une même session, puis propose « OK / Ouvrir ».\n\n'
+      'Pour un APK simple, en mode ADB ou root, confirme dans le programme d’installation Android, puis utilise « OK / Ouvrir » après réussite.\n\n'
+      'Pour une archive split, confirme ici : Shizuku installe tous les composants dans une même session, puis propose « OK / Ouvrir ». Android peut afficher « via Shell » pour ce parcours.\n\n'
       'L’attribution Play Store est demandée. '
       'Son acceptation dépend du système.\n\n'
       'Comment l\'activer :\n'
