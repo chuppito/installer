@@ -379,12 +379,11 @@ class MainActivity : FlutterActivity() {
                 val intent = buildKingIntent(fileUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     putExtra("android.content.pm.extra.INSTALL_REASON", 1)
-                    // URI permissions were granted above using the app's identity.
-                    // Root is explicitly forbidden to propagate these flags by Android.
-                    flags = NativeInstallerLaunchPolicy.flags(serverUid, flags)
                 }
-                val code = NativeInstallerLauncher.launchWithShizuku(intent)
-                log(tag, "startActivityAsUser via Shizuku -> code=$code")
+                val code = if (serverUid == 0) {
+                    RootNativeInstallerLauncher.launch(this, intent)
+                } else NativeInstallerLauncher.launchWithShizuku(intent)
+                log(tag, "startActivityAsUser -> code=$code, lanceur uid=2000, serveur uid=$serverUid")
                 runOnUiThread {
                     privilegedInstallRunning = false
                     // Opening the installer is not confirmation of installation.

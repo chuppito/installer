@@ -17,10 +17,15 @@ internal object NativeInstallerLauncher {
     private const val SHELL_PACKAGE = "com.android.shell"
 
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
-    fun launchWithShizuku(intent: Intent): Int {
+    fun launchWithShizuku(intent: Intent): Int =
+        launch(intent, android.os.Process.myUid() / 100000, true)
+
+    fun launchFromShellProcess(intent: Intent, userId: Int): Int = launch(intent, userId, false)
+
+    private fun launch(intent: Intent, userId: Int, throughShizuku: Boolean): Int {
         // Shizuku changes the Binder caller, but the reflection below still
         // runs in this application's process and is subject to hidden-API rules.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (throughShizuku && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val enabled = HiddenApiBypass.addHiddenApiExemptions(
                 "Landroid/app/IActivityTaskManager",
                 "Landroid/app/IActivityManager"
@@ -37,8 +42,9 @@ internal object NativeInstallerLauncher {
         val service = SystemServiceHelper.getSystemService(serviceName)
             ?: throw IOException("Service Android $serviceName indisponible")
         val stub = Class.forName(stubName)
+        val caller = if (throughShizuku) ShizukuBinderWrapper(service) else service
         val remote = stub.getDeclaredMethod("asInterface", IBinder::class.java)
-            .invoke(null, ShizukuBinderWrapper(service))
+            .invoke(null, caller)
             ?: throw IOException("Interface Android indisponible")
         val method = remote.javaClass.methods.firstOrNull {
             it.name == "startActivityAsUser" && it.parameterTypes.any { type -> type == Intent::class.java }
@@ -58,7 +64,8 @@ internal object NativeInstallerLauncher {
             args[index] = when {
                 index == intentIndex -> intent
                 index == callingPackageIndex -> SHELL_PACKAGE
-                index == userIdIndex -> android.os.Process.myUid() / 100000
+                index == userIdIndex -> userId
+                index == intentIndex + 1 && types[index] == String::class.java -> intent.type
                 types[index] == Int::class.javaPrimitiveType -> 0
                 types[index] == Boolean::class.javaPrimitiveType -> false
                 else -> null

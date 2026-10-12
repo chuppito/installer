@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.10)
+project(installer_launch LANGUAGES CXX)
+add_library(installer_launch SHARED shell_credentials.cpp)
+target_compile_features(installer_launch PRIVATE cxx_std_17)
+target_compile_options(installer_launch PRIVATE -Wall -Wextra -Werror)
